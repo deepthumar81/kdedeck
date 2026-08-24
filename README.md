@@ -1,52 +1,66 @@
-<p align="center">
-  <img src="https://deckboard.app/_nuxt/img/featured-desktop.c893dd9.png" width=75% />
-  <h2 align="center">Deckboard</h2>
-  <p align="center">
-    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-red.svg?style=for-the-badge"/>
-    <img src="https://img.shields.io/github/release/rivafarabi/deckboard.svg?style=for-the-badge" />
-    <img src="https://img.shields.io/github/downloads/rivafarabi/deckboard/total.svg?style=for-the-badge" />
-    <img src="https://img.shields.io/twitter/follow/DeckboardApp?label=Follow&style=for-the-badge&logo=twitter" />
-  </p>
-</p>
+# KdeDeck 🚀
 
-Create custom computer macro shortcuts and launch them through your device.
-No more windows switching to open the folder or website, get Deckboard to simplify them and maximize your productivity!
-With OBS Studio and Streamlabs OBS supported, bring Deckboard as your personal streaming companion tool!
-Connect your computer to your device through local WiFi connection by entering IP address or scanning QR code.
+**KdeDeck** is a ultra-lightweight, open-source Stream Deck / Macro Pad server and Progressive Web App (PWA) designed specifically for **Linux (KDE Plasma 6 on Wayland & X11)**.
 
-## Features
-- Custom macro button with image and label
-- Unlimited macros with 4 x 3 buttons per board (15 x 15 buttons on pro version)
-- OBS Studio and Streamlabs OBS control for streaming (OBS Websocket plugin required)
-- Easy connect through local WiFi connection by entering IP address or scanning QR code.
+Built as a high-performance alternative to Electron-based macro pads, **KdeDeck consumes ~14MB of RAM** (compared to 400MB+ in traditional Electron apps) while offering deep integration with KDE Plasma, Wayland, MPRIS D-Bus, and KDE Connect.
 
-## Available Macros
-- Keyboard macro
-- Open website
-- Open folder
-- Multimedia controls (play, next track, prev track , etc)
-- Run executable
-- Twitch chat controls
-- Spotify playlist control (like track and add track to playlist)
-- Switch scenes (OBS Studio and Streamlabs OBS)
-- Toggle resources (OBS Studio and Streamlabs OBS)
-- Toggle streaming and recording (OBS Studio and Streamlabs OBS)
-- Control audio device (OBS Studio)
+---
 
-## Download
-- [Server App (Windows/Linux)](https://github.com/rivafarabi/deckboard/releases)
-- [Android](https://play.google.com/store/apps/details?id=com.rivafarabi.deckboard)
-- [Android (Pro Version with more layouts)](https://play.google.com/store/apps/details?id=com.rivafarabi.deckboard.pro)
+## Features ✨
 
-## Support The Dev
-Love the app? You can support the development by purchasing [PRO version](https://play.google.com/store/apps/details?id=com.rivafarabi.deckboard.pro) or donate.
+* 📱 **PWA Mobile Support**: No APK installation needed! Open `http://<YOUR_PC_IP>:8484` on your Android or iOS device, tap **"Add to Home Screen"**, and launch as a fullscreen app with low-latency touch controls and vibration haptics (`navigator.vibrate`).
+* 👈👉 **Multi-Board Swipe Navigation**: Create unlimited boards (e.g., *System & Audio*, *Media & Browser*, *KDE Connect*, *Active Taskbar*). Swipe left/right on your phone screen to switch between boards.
+* ⚡ **Ultra-Low Memory Footprint**: Runs on a Python asynchronous backend (`aiohttp`) consuming **~14MB RAM** in the background.
+* 🎚️ **Interactive Touch Sliders**: Smooth real-time touch sliders for per-monitor brightness (`ddcutil` / `brightnessctl`) and system/application sound volume (`pactl`).
+* 🖼️ **Live KWin Taskbar Switcher**: Dynamic board page that streams running KDE application windows in real time. Tapping an app tile focuses that window instantly on Wayland.
+* 📲 **KDE Connect Integration**: Native deck actions to find/ring your phone 🔔, check battery status 🔋, and sync clipboard 📋.
+* 🎵 **MPRIS Media Controls**: Play, pause, skip tracks, and display metadata for Spotify, VLC, Firefox, Chrome, etc.
+* 🎨 **Rich UI & Themes**: Glassmorphism design with preset themes (*KDE Breeze Dark*, *Cyberpunk Neon*, *OLED Black*, *Sunset Gradient*) and 1,000+ vector icons.
+* 🛠️ **Visual Board Editor**: Customize buttons, icons, colors, actions, and layouts directly from your PC browser.
 
-<a href='https://ko-fi.com/G2G21CLFT' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://az743702.vo.msecnd.net/cdn/kofi1.png?v=2' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+---
 
-## Privacy Policy
+## Quick Start 🛠️
 
-The application Deckboard (Android), hereby defined as the app, requests the following potentially sensitive data:
+### 1. Start KdeDeck Server
+```bash
+./kdedeck/cli/kdedeck start
+```
 
-- android.permission.CAMERA
+### 2. Check Status & Memory Usage
+```bash
+./kdedeck/cli/kdedeck status
+```
 
-This potentially sensitive data is not transmitted over the internet, and is not stored by the app. It is not handled by any system other than the device the app is installed on.
+### 3. Open Deck on Mobile Device
+Open `http://<YOUR_PC_IP>:8484` in Chrome or Firefox on your phone, then tap **"Add to Home Screen"**.
+
+### 4. Enable Launch on KDE Boot (Autostart)
+```bash
+./kdedeck/cli/kdedeck enable-autostart
+```
+
+---
+
+## Project Architecture
+
+```
+kdedeck/
+├── server/               # Asynchronous Python Backend (~14MB RAM)
+│   ├── main.py           # Web & WebSocket Server
+│   ├── config_manager.py # JSON Configuration & Multi-Board Storage
+│   └── plugins/          # Action Handlers (PulseAudio, D-Bus, KWin, MPRIS, KDE Connect)
+├── web/                  # Progressive Web App (PWA)
+│   ├── index.html        # Mobile & Desktop Single Page App
+│   ├── css/style.css     # Glassmorphism & Theme Engine
+│   ├── js/app.js         # WebSocket, Touch Swipe & Editor Logic
+│   └── js/icons.js       # Vector Icon Dataset
+└── cli/
+    └── kdedeck           # CLI Service Management Script
+```
+
+---
+
+## License 📜
+
+Distributed under the MIT License.
