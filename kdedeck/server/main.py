@@ -35,14 +35,17 @@ class KdeDeckServer:
 
     async def index_handler(self, request):
         index_file = os.path.join(WEB_DIR, "index.html")
-        return web.FileResponse(index_file)
+        return web.FileResponse(index_file, headers={"Cache-Control": "no-cache"})
 
     async def static_handler(self, request):
         path = request.match_info.get("path", "")
         file_path = os.path.join(WEB_DIR, path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
+            # No-cache for JS/CSS/HTML so updates always take effect
+            if file_path.endswith(('.js', '.css', '.html')):
+                return web.FileResponse(file_path, headers={"Cache-Control": "no-cache"})
             return web.FileResponse(file_path)
-        return web.FileResponse(os.path.join(WEB_DIR, "index.html"))
+        return web.FileResponse(os.path.join(WEB_DIR, "index.html"), headers={"Cache-Control": "no-cache"})
 
     async def apps_api_handler(self, request):
         """API returning installed system desktop applications."""
@@ -226,7 +229,7 @@ class KdeDeckServer:
         site = web.TCPSite(runner, "0.0.0.0", self.port)
         await site.start()
 
-        asyncio.create_task(self.background_state_poll())
+        asyncio.get_event_loop().create_task(self.background_state_poll())
 
         logger.info("=" * 60)
         logger.info(f"🚀 KdeDeck Server running on http://0.0.0.0:{self.port}")
