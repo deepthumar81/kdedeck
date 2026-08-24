@@ -30,6 +30,17 @@ class KdeDeckServer:
         self.config_mgr = ConfigManager()
         self.sockets = set()
 
+    async def index_handler(self, request):
+        index_file = os.path.join(WEB_DIR, "index.html")
+        return web.FileResponse(index_file)
+
+    async def static_handler(self, request):
+        path = request.match_info.get("path", "")
+        file_path = os.path.join(WEB_DIR, path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return web.FileResponse(file_path)
+        return web.FileResponse(os.path.join(WEB_DIR, "index.html"))
+
     async def ws_handler(self, request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
@@ -60,7 +71,7 @@ class KdeDeckServer:
                 elif msg.type == web.WSMsgType.ERROR:
                     logger.error(f"WebSocket error: {ws.exception()}")
         finally:
-            self.sockets.remove(ws)
+            self.sockets.discard(ws)
             logger.info(f"Client disconnected. Remaining clients: {len(self.sockets)}")
         return ws
 
@@ -143,7 +154,8 @@ class KdeDeckServer:
     async def start(self):
         app = web.Application()
         app.router.add_get("/ws", self.ws_handler)
-        app.router.add_static("/", WEB_DIR, show_index=True)
+        app.router.add_get("/", self.index_handler)
+        app.router.add_get("/{path:.*}", self.static_handler)
 
         config = self.config_mgr.get_config()
         self.port = config.get("port", 8484)
@@ -153,15 +165,13 @@ class KdeDeckServer:
         site = web.TCPSite(runner, "0.0.0.0", self.port)
         await site.start()
 
-        # Start background polling
-        asyncio.create_subprocess_task = asyncio.create_task(self.background_state_poll())
+        asyncio.create_task(self.background_state_poll())
 
         logger.info("=" * 60)
         logger.info(f"🚀 KdeDeck Server running on http://0.0.0.0:{self.port}")
         logger.info(f"📱 Open http://<YOUR_PC_IP>:{self.port} on your Android phone browser!")
         logger.info("=" * 60)
 
-        # Keep server running
         await asyncio.Event().wait()
 
 def main():

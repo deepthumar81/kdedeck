@@ -5,7 +5,11 @@ import subprocess
 import signal
 import time
 
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SCRIPT_PATH = os.path.realpath(__file__)
+CLI_DIR = os.path.dirname(SCRIPT_PATH)
+KDEDECK_DIR = os.path.dirname(CLI_DIR)
+PROJECT_DIR = os.path.dirname(KDEDECK_DIR)
+
 VENV_PYTHON = os.path.join(PROJECT_DIR, "venv", "bin", "python3")
 SERVER_MAIN = os.path.join(PROJECT_DIR, "kdedeck", "server", "main.py")
 PID_FILE = os.path.expanduser("~/.config/kdedeck/kdedeck.pid")
@@ -80,6 +84,16 @@ def print_status():
     else:
         print("🔴 KdeDeck Status: STOPPED")
 
+def install_cli():
+    bin_dir = os.path.expanduser("~/.local/bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    target = os.path.join(bin_dir, "kdedeck")
+    if os.path.lexists(target):
+        os.remove(target)
+    os.symlink(SCRIPT_PATH, target)
+    print(f"✅ Symlinked 'kdedeck' executable to {target}")
+    print("Now you can run 'kdedeck start', 'kdedeck status', 'kdedeck stop' from any terminal!")
+
 def enable_autostart():
     os.makedirs(SYSTEMD_USER_DIR, exist_ok=True)
     os.makedirs(AUTOSTART_DIR, exist_ok=True)
@@ -122,7 +136,7 @@ X-KDE-autostart-after=panel
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: kdedeck {start|stop|status|enable-autostart}")
+        print("Usage: kdedeck {start|stop|status|enable-autostart|install-cli}")
         sys.exit(1)
 
     cmd = sys.argv[1].lower()
@@ -134,6 +148,8 @@ def main():
         print_status()
     elif cmd == "enable-autostart":
         enable_autostart()
+    elif cmd == "install-cli":
+        install_cli()
     else:
         print(f"Unknown command: {cmd}")
 
