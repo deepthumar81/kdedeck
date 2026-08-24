@@ -14,6 +14,9 @@
   <!-- Toast Notification Banners -->
   <div class="toast-container" id="toastContainer"></div>
 
+  <!-- Hidden Import File Input -->
+  <input type="file" id="importFileInput" accept=".json" style="display: none;" onchange="handleImportFile(event)">
+
   <!-- Header & Navigation -->
   <header>
     <div class="brand">
@@ -23,24 +26,29 @@
       <span>KdeDeck</span>
     </div>
 
+    <!-- Carousel Board Navigation (Prev / Next & Dots) -->
     <div class="board-navigation">
+      <button class="carousel-btn" onclick="prevBoard()" title="Previous Board">‹</button>
       <div class="page-indicator" id="pageDots"></div>
+      <button class="carousel-btn" onclick="nextBoard()" title="Next Board">›</button>
     </div>
 
     <div style="display: flex; gap: 8px;">
       <button class="action-btn" id="addBtnControl" onclick="addNewItemToBoard()" style="display: none;">+ Button</button>
       <button class="action-btn" id="addBoardControl" onclick="addNewBoard()" style="display: none;">+ Board</button>
+      <button class="action-btn" onclick="exportConfig()" title="Export Config">Export</button>
+      <button class="action-btn" onclick="triggerImportConfig()" title="Import Config">Import</button>
       <button class="action-btn" id="editToggleBtn" onclick="toggleEditMode()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
         <span id="editBtnText">Edit</span>
       </button>
-      <button class="action-btn" onclick="cycleTheme()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 14 7 7 0 0 0 0-14z"/></svg>
+      <button class="action-btn" onclick="cycleTheme()" title="Switch Theme Mode">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 14 7 7 0 0 0 0-14z"/></svg>
       </button>
     </div>
   </header>
 
-  <!-- Main Multi-Board Swipe Wrapper -->
+  <!-- Main Multi-Board Swipe / Carousel Wrapper -->
   <main id="mainContainer">
     <div class="boards-wrapper" id="boardsContainer"></div>
   </main>
@@ -61,7 +69,25 @@
     </div>
   </div>
 
-  <!-- Button / Board Editor Modal -->
+  <!-- Board Renaming Modal -->
+  <div class="modal-overlay" id="boardRenameModal">
+    <div class="modal-card" style="max-width: 400px;">
+      <div class="modal-header">
+        <div class="modal-title">Rename Board</div>
+        <button class="action-btn" onclick="closeBoardRenameModal()" style="padding: 4px 8px;">✕</button>
+      </div>
+      <div class="form-group">
+        <label>Board Title</label>
+        <input type="text" id="editBoardTitleInput" class="form-input" placeholder="e.g. Gaming or Media">
+      </div>
+      <div class="modal-actions">
+        <button class="action-btn" onclick="closeBoardRenameModal()">Cancel</button>
+        <button class="action-btn" style="background: var(--accent);" onclick="saveBoardTitle()">Save Title</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Button Item Editor Modal -->
   <div class="modal-overlay" id="editorModal">
     <div class="modal-card">
       <div class="modal-header">
@@ -70,7 +96,7 @@
       </div>
 
       <div class="form-group">
-        <label>Pick Installed Application</label>
+        <label>Pick Installed Application (APT / Flatpak / Snap)</label>
         <select id="systemAppPicker" class="form-select" onchange="onSystemAppPick()">
           <option value="">-- Choose Installed Application --</option>
         </select>
@@ -115,7 +141,7 @@
       </div>
 
       <div class="form-group">
-        <label>Icon</label>
+        <label>Icon Name (System App Icon or Lucide Name)</label>
         <input type="text" id="editIcon" class="form-input" placeholder="e.g. firefox, terminal, sun, volume-2">
       </div>
 

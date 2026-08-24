@@ -7,7 +7,10 @@ let installedAppsCache = [];
 
 let touchStartX = 0;
 let touchEndX = 0;
+let isMouseDown = false;
+let mouseStartX = 0;
 let editingItemRef = null;
+let renamingBoardIdx = null;
 let sliderDebounceTimers = {};
 
 // Register Service Worker for PWA
@@ -15,8 +18,8 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW reg error:', err));
 }
 
-// Themes list
-const THEMES = ['theme-breeze-dark', 'theme-cyberpunk', 'theme-oled', 'theme-sunset'];
+// iOS 18 / One UI 9 Theme Modes
+const THEMES = ['theme-breeze-dark', 'theme-light', 'theme-ios-colorful'];
 let currentThemeIdx = 0;
 
 function cycleTheme() {
@@ -49,7 +52,6 @@ function initWebSocket() {
 
   ws.onopen = () => {
     console.log('Connected to KdeDeck Server');
-    // Send stored token if available
     const savedToken = localStorage.getItem('kdedeck_token');
     if (savedToken) {
       ws.send(JSON.stringify({ type: 'authenticate', token: savedToken }));
@@ -83,7 +85,6 @@ function handleServerMessage(data) {
     if (data.state) currentState = { ...currentState, ...data.state };
     renderAllBoards();
 
-    // Check PIN requirement
     const savedToken = localStorage.getItem('kdedeck_token');
     if (data.pin_required && !savedToken) {
       document.getElementById('pinModal').classList.add('active');
@@ -95,9 +96,6 @@ function handleServerMessage(data) {
     showToast(data.message || 'Invalid PIN', 'error');
   } else if (data.type === 'action_warning' || data.type === 'action_error') {
     showToast(data.message, data.type === 'action_warning' ? 'warning' : 'error');
-    if (data.item_id) {
-      markItemError(data.item_id);
-    }
   } else if (data.type === 'state_update') {
     currentState[data.key] = data.value;
     updateSliderUI(data.key, data.value);
@@ -106,7 +104,6 @@ function handleServerMessage(data) {
       currentState = { ...currentState, ...data.state };
       updateSliderUI('volume', currentState.volume);
       updateSliderUI('brightness', currentState.brightness);
-      renderTaskbarBoard();
     }
   } else if (data.type === 'taskbar_update') {
     currentState.open_windows = data.windows;
@@ -118,17 +115,6 @@ function submitPinAuth() {
   const pin = document.getElementById('inputPin').value;
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'authenticate', pin: pin }));
-  }
-}
-
-function markItemError(itemId) {
-  const itemEl = document.getElementById(`item_${itemId}`);
-  if (itemEl && !itemEl.querySelector('.error-badge')) {
-    const badge = document.createElement('div');
-    badge.className = 'error-badge';
-    badge.innerText = '!';
-    itemEl.appendChild(badge);
-    setTimeout(() => badge.remove(), 4000);
   }
 }
 
@@ -154,12 +140,21 @@ function renderAllBoards() {
 
     const titleBar = document.createElement('div');
     titleBar.className = 'board-title-bar';
-    titleBar.innerHTML = `<span>${board.title}</span>`;
+    
+    const titleSpan = document.createElement('span');
+    titleSpan.innerText = board.title;
+
+    if (isEditMode) {
+      titleSpan.style.cursor = 'pointer';
+      titleSpan.title = 'Click to Rename Board';
+      titleSpan.onclick = () => openBoardRenameModal(bIdx);
+    }
+    titleBar.appendChild(titleSpan);
 
     if (isEditMode) {
       const delBoardBtn = document.createElement('button');
       delBoardBtn.className = 'action-btn';
-      delBoardBtn.style.padding = '2px 8px';
+      delBoardBtn.style.padding = '4px 10px';
       delBoardBtn.style.fontSize = '0.75rem';
       delBoardBtn.innerText = 'Delete Board';
       delBoardBtn.onclick = () => deleteBoard(bIdx);
@@ -190,7 +185,6 @@ function renderAllBoards() {
 
 function createDeckItemElement(item, bIdx, itemIdx) {
   const div = document.createElement('div');
-  div.id = `item_${item.id || itemIdx}`;
 
   if (item.type === 'slider') {
     div.className = `deck-item slider-item ${item.color || 'gradient-blue'}`;
@@ -227,13 +221,13 @@ function createDeckItemElement(item, bIdx, itemIdx) {
   return div;
 }
 
+// Clean renderIconHTML without string interpolation bugs (fixes screenshot bug)
 function renderIconHTML(iconName) {
   if (!iconName) return getIconSvg('box');
-  // Check if system icon exists via API image or SVG fallback
   if (ICONS[iconName]) {
     return ICONS[iconName];
   }
-  return `<img src="/api/icon/${encodeURIComponent(iconName)}" class="app-icon-img" onerror="this.onerror=null; this.outerHTML=\`${getIconSvg('box')}\`;">`;
+  return `<img src="/api/icon/${encodeURIComponent(iconName)}" class="app-icon-img" onerror="this.style.display='none';">`;
 }
 
 function renderTaskbarBoard() {
@@ -275,7 +269,7 @@ function sendAction(action, payload=null, value=null, itemId=null) {
   }
 }
 
-// 150ms Client-Side Slider Debouncing
+// 150ms Slider Debouncing
 function onSliderInput(e, action, id) {
   const val = e.target.value;
   const label = document.getElementById(`val_${id}`);
@@ -305,7 +299,7 @@ function updateSliderUI(key, val) {
   });
 }
 
-// Touch Swipe Navigation
+// Board Navigation (Touch Swipe, Carousel Buttons, Mouse Drag, Keyboard Arrows)
 const mainContainer = document.getElementById('mainContainer');
 
 mainContainer.addEventListener('touchstart', e => {
@@ -314,21 +308,46 @@ mainContainer.addEventListener('touchstart', e => {
 
 mainContainer.addEventListener('touchend', e => {
   touchEndX = e.changedTouches[0].screenX;
-  handleSwipe();
+  handleSwipe(touchStartX, touchEndX);
 }, false);
 
-function handleSwipe() {
-  const diff = touchStartX - touchEndX;
-  if (Math.abs(diff) > 50) {
-    if (diff > 0) {
-      if (currentConfig && activeBoardIndex < currentConfig.boards.length - 1) {
-        switchBoard(activeBoardIndex + 1);
-      }
-    } else {
-      if (activeBoardIndex > 0) {
-        switchBoard(activeBoardIndex - 1);
-      }
-    }
+// Mouse Drag Swipe for PC Desktop
+mainContainer.addEventListener('mousedown', e => {
+  isMouseDown = true;
+  mouseStartX = e.clientX;
+});
+
+mainContainer.addEventListener('mouseup', e => {
+  if (isMouseDown) {
+    isMouseDown = false;
+    handleSwipe(mouseStartX, e.clientX);
+  }
+});
+
+// Keyboard Arrow Navigation
+document.addEventListener('keydown', e => {
+  if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT') return;
+  if (e.key === 'ArrowRight') nextBoard();
+  if (e.key === 'ArrowLeft') prevBoard();
+});
+
+function handleSwipe(startX, endX) {
+  const diff = startX - endX;
+  if (Math.abs(diff) > 60) {
+    if (diff > 0) nextBoard();
+    else prevBoard();
+  }
+}
+
+function nextBoard() {
+  if (currentConfig && activeBoardIndex < currentConfig.boards.length - 1) {
+    switchBoard(activeBoardIndex + 1);
+  }
+}
+
+function prevBoard() {
+  if (activeBoardIndex > 0) {
+    switchBoard(activeBoardIndex - 1);
   }
 }
 
@@ -349,6 +368,65 @@ function updateBoardTransform() {
   if (container) {
     container.style.transform = `translateX(-${activeBoardIndex * 100}%)`;
   }
+}
+
+// Export & Import Settings
+function exportConfig() {
+  window.location.href = '/api/config/export';
+}
+
+function triggerImportConfig() {
+  document.getElementById('importFileInput').click();
+}
+
+function handleImportFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const importedData = JSON.parse(e.target.result);
+      fetch('/api/config/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(importedData)
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'ok') {
+          showToast('Configuration imported successfully!', 'warning');
+        } else {
+          showToast(data.message || 'Import failed', 'error');
+        }
+      });
+    } catch (err) {
+      showToast('Invalid JSON file', 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+// Board Renaming
+function openBoardRenameModal(bIdx) {
+  renamingBoardIdx = bIdx;
+  document.getElementById('editBoardTitleInput').value = currentConfig.boards[bIdx].title;
+  document.getElementById('boardRenameModal').classList.add('active');
+}
+
+function closeBoardRenameModal() {
+  document.getElementById('boardRenameModal').classList.remove('active');
+}
+
+function saveBoardTitle() {
+  if (renamingBoardIdx === null) return;
+  const newTitle = document.getElementById('editBoardTitleInput').value.trim();
+  if (newTitle) {
+    currentConfig.boards[renamingBoardIdx].title = newTitle;
+    saveConfigToServer();
+    renderAllBoards();
+  }
+  closeBoardRenameModal();
 }
 
 // Edit Mode & System Apps Fetching

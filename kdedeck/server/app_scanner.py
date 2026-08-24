@@ -8,7 +8,13 @@ logger = logging.getLogger("kdedeck.app_scanner")
 SYSTEM_APP_DIRS = [
     "/usr/share/applications",
     "/usr/local/share/applications",
-    os.path.expanduser("~/.local/share/applications")
+    os.path.expanduser("~/.local/share/applications"),
+    # Snap Applications
+    "/var/lib/snapd/desktop/applications",
+    os.path.expanduser("~/.local/share/snap/desktop/applications"),
+    # Flatpak Applications
+    "/var/lib/flatpak/exports/share/applications",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/applications")
 ]
 
 ICON_THEME_DIRS = [
@@ -16,7 +22,10 @@ ICON_THEME_DIRS = [
     "/usr/share/icons/breeze",
     "/usr/share/icons/breeze-dark",
     "/usr/share/pixmaps",
-    os.path.expanduser("~/.local/share/icons")
+    os.path.expanduser("~/.local/share/icons"),
+    "/var/lib/flatpak/exports/share/icons",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/icons"),
+    "/var/lib/snapd/desktop/icons"
 ]
 
 class AppScanner:
@@ -48,7 +57,7 @@ class AppScanner:
                                 name = line.split("=", 1)[1]
                             elif line.startswith("Exec=") and not exec_cmd:
                                 exec_cmd = line.split("=", 1)[1]
-                                # Strip field codes like %f, %u
+                                # Strip field codes like %f, %u, %F, %U
                                 exec_cmd = re.sub(r"%[a-zA-Z]", "", exec_cmd).strip()
                             elif line.startswith("Icon=") and not icon:
                                 icon = line.split("=", 1)[1]
@@ -62,13 +71,13 @@ class AppScanner:
                             "exec": exec_cmd,
                             "icon": icon or "box"
                         })
-                except Exception as e:
+                except Exception:
                     pass
 
         # Sort alphabetically
         apps.sort(key=lambda x: x["name"].lower())
         cls._apps_cache = apps
-        logger.info(f"Scanned {len(apps)} installed desktop applications.")
+        logger.info(f"Scanned {len(apps)} installed desktop apps (APT, Flatpak, Snap).")
         return apps
 
     @classmethod
@@ -79,22 +88,19 @@ class AppScanner:
         if icon_name in cls._icon_cache:
             return cls._icon_cache[icon_name]
 
-        # If it's an absolute path
         if os.path.isabs(icon_name) and os.path.exists(icon_name):
             cls._icon_cache[icon_name] = icon_name
             return icon_name
 
-        # Search icon themes
         for base_dir in ICON_THEME_DIRS:
             if not os.path.exists(base_dir):
                 continue
-            for ext in ["svg", "png", "xpm"]:
+            for ext in ["png", "svg", "xpm"]:
                 matches = glob.glob(os.path.join(base_dir, "**", f"{icon_name}.{ext}"), recursive=True)
                 if matches:
-                    # Prefer scalable or large size icons
                     best_match = matches[0]
                     for m in matches:
-                        if "48x48" in m or "scalable" in m or "128x128" in m:
+                        if "48x48" in m or "scalable" in m or "128x128" in m or "64x64" in m:
                             best_match = m
                             break
                     cls._icon_cache[icon_name] = best_match

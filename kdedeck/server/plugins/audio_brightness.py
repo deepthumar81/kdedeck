@@ -8,8 +8,6 @@ logger = logging.getLogger("kdedeck.audio_brightness")
 class AudioBrightnessPlugin:
     _cached_volume = 50
     _cached_brightness = 70
-    _brightness_lock = asyncio.Lock()
-    _last_brightness_target = None
 
     @classmethod
     def get_volume(cls):
@@ -26,7 +24,6 @@ class AudioBrightnessPlugin:
     async def set_volume(cls, level):
         level = max(0, min(100, int(level)))
         cls._cached_volume = level
-        # Run non-blocking in thread pool
         asyncio.create_task(run_command_async(f"pactl set-sink-volume @DEFAULT_SINK@ {level}%"))
         return level
 
@@ -44,11 +41,6 @@ class AudioBrightnessPlugin:
             if out and max_b and int(max_b) > 0:
                 cls._cached_brightness = int((int(out) / int(max_b)) * 100)
                 return cls._cached_brightness
-
-            out = run_command_sync("ddcutil getvcp 10 2>/dev/null")
-            match = re.search(r"current value =\s*(\d+)", out)
-            if match:
-                cls._cached_brightness = int(match.group(1))
         except Exception:
             pass
         return cls._cached_brightness
@@ -57,19 +49,6 @@ class AudioBrightnessPlugin:
     async def set_brightness(cls, level):
         level = max(5, min(100, int(level)))
         cls._cached_brightness = level
-        cls._last_brightness_target = level
-
-        # Asynchronous non-blocking worker queue to prevent ddcutil from freezing system
-        asyncio.create_task(cls._apply_brightness_worker(level))
+        # Fast non-blocking brightnessctl call only (no ddcutil hardware I2C calls)
+        asyncio.create_task(run_command_async(f"brightnessctl s {level}% 2>/dev/null"))
         return level
-
-    @classmethod
-    async def _apply_brightness_worker(cls, level):
-        async with cls._brightness_lock:
-            # If target changed while waiting, use latest target
-            target = cls._last_brightness_target or level
-            # Try fast brightnessctl first
-            res = await run_command_async(f"brightnessctl s {target}% 2>/dev/null")
-            if not res:
-                # Run ddcutil in thread pool without blocking event loop
-                await asyncio.to_thread(run_command_sync, f"ddcutil setvcp 10 {target} --noverify 2>/dev/null")

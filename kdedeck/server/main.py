@@ -41,7 +41,6 @@ class KdeDeckServer:
         path = request.match_info.get("path", "")
         file_path = os.path.join(WEB_DIR, path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
-            # No-cache for JS/CSS/HTML so updates always take effect
             if file_path.endswith(('.js', '.css', '.html')):
                 return web.FileResponse(file_path, headers={"Cache-Control": "no-cache"})
             return web.FileResponse(file_path)
@@ -59,7 +58,6 @@ class KdeDeckServer:
         if icon_path and os.path.exists(icon_path):
             content_type = "image/svg+xml" if icon_path.endswith(".svg") else "image/png"
             return web.FileResponse(icon_path, headers={"Content-Type": content_type})
-        # Fallback empty 404 or transparent 1px PNG
         return web.Response(status=404, text="Icon not found")
 
     async def auth_api_handler(self, request):
@@ -74,6 +72,27 @@ class KdeDeckServer:
             return web.json_response({"status": "error", "message": "Invalid PIN"}, status=401)
         except Exception:
             return web.json_response({"status": "error", "message": "Bad request"}, status=400)
+
+    async def export_config_handler(self, request):
+        """Export current settings & boards JSON file."""
+        config = self.config_mgr.get_config()
+        return web.Response(
+            body=json.dumps(config, indent=2),
+            content_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="kdedeck-config.json"'}
+        )
+
+    async def import_config_handler(self, request):
+        """Import settings & boards JSON configuration."""
+        try:
+            data = await request.json()
+            if "boards" in data:
+                self.config_mgr.save_config(data)
+                await self.broadcast({"type": "config_updated", "config": data})
+                return web.json_response({"status": "ok", "message": "Configuration imported successfully"})
+            return web.json_response({"status": "error", "message": "Invalid configuration format"}, status=400)
+        except Exception as e:
+            return web.json_response({"status": "error", "message": str(e)}, status=400)
 
     async def ws_handler(self, request):
         ws = web.WebSocketResponse()
@@ -196,19 +215,17 @@ class KdeDeckServer:
                 pass
 
     async def background_state_poll(self):
-        """Polls system state every 5 seconds without blocking CPU."""
+        """Polls lightweight volume and brightness state every 6 seconds without heavy subprocesses."""
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(6)
             if self.sockets:
-                windows = KWinTaskbarPlugin.get_open_windows()
                 vol = AudioBrightnessPlugin.get_volume()
                 bright = AudioBrightnessPlugin.get_brightness()
                 await self.broadcast({
                     "type": "state_poll",
                     "state": {
                         "volume": vol,
-                        "brightness": bright,
-                        "open_windows": windows
+                        "brightness": bright
                     }
                 })
 
@@ -218,6 +235,8 @@ class KdeDeckServer:
         app.router.add_get("/api/apps", self.apps_api_handler)
         app.router.add_get("/api/icon/{name}", self.icon_api_handler)
         app.router.add_post("/api/auth", self.auth_api_handler)
+        app.router.add_get("/api/config/export", self.export_config_handler)
+        app.router.add_post("/api/config/import", self.import_config_handler)
         app.router.add_get("/", self.index_handler)
         app.router.add_get("/{path:.*}", self.static_handler)
 
