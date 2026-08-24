@@ -16,6 +16,7 @@ logger = logging.getLogger("kdedeck.server")
 # Import server components
 from kdedeck.server.config_manager import ConfigManager
 from kdedeck.server.app_scanner import AppScanner
+from kdedeck.server.plugins.system_metrics import SystemMetricsPlugin
 from kdedeck.server.plugins.audio_brightness import AudioBrightnessPlugin
 from kdedeck.server.plugins.mpris import MPRISPlugin
 from kdedeck.server.plugins.kde_connect import KDEConnectPlugin
@@ -108,7 +109,8 @@ class KdeDeckServer:
             "state": {
                 "volume": AudioBrightnessPlugin.get_volume(),
                 "brightness": AudioBrightnessPlugin.get_brightness(),
-                "open_windows": KWinTaskbarPlugin.get_open_windows()
+                "open_windows": KWinTaskbarPlugin.get_open_windows(),
+                "metrics": SystemMetricsPlugin.get_metrics()
             }
         })
 
@@ -200,6 +202,8 @@ class KdeDeckServer:
         elif msg_type == "save_config":
             new_config = data.get("config")
             if new_config:
+                if "pin" in new_config:
+                    self.pin = new_config["pin"]
                 self.config_mgr.save_config(new_config)
                 await self.broadcast({"type": "config_updated", "config": new_config})
 
@@ -215,17 +219,19 @@ class KdeDeckServer:
                 pass
 
     async def background_state_poll(self):
-        """Polls lightweight volume and brightness state every 6 seconds without heavy subprocesses."""
+        """Polls lightweight volume, brightness, and system metrics every 4 seconds."""
         while True:
-            await asyncio.sleep(6)
+            await asyncio.sleep(4)
             if self.sockets:
                 vol = AudioBrightnessPlugin.get_volume()
                 bright = AudioBrightnessPlugin.get_brightness()
+                metrics = SystemMetricsPlugin.get_metrics()
                 await self.broadcast({
                     "type": "state_poll",
                     "state": {
                         "volume": vol,
-                        "brightness": bright
+                        "brightness": bright,
+                        "metrics": metrics
                     }
                 })
 

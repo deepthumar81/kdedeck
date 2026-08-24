@@ -1,6 +1,6 @@
 let ws = null;
 let currentConfig = null;
-let currentState = { volume: 50, brightness: 70, open_windows: [] };
+let currentState = { volume: 50, brightness: 70, open_windows: [], metrics: null };
 let activeBoardIndex = 0;
 let isEditMode = false;
 let installedAppsCache = [];
@@ -114,7 +114,12 @@ function handleServerMessage(data) {
   if (data.type === 'init_state' || data.type === 'config_updated') {
     currentConfig = data.config;
     if (data.state) currentState = { ...currentState, ...data.state };
+
+    applyGridCssVariables();
     renderAllBoards();
+
+    const pinDisplay = document.getElementById('displayPin');
+    if (pinDisplay && currentConfig.pin) pinDisplay.innerText = currentConfig.pin;
 
     const savedToken = localStorage.getItem('kdedeck_token');
     if (data.pin_required && !savedToken) {
@@ -135,11 +140,20 @@ function handleServerMessage(data) {
       currentState = { ...currentState, ...data.state };
       updateSliderUI('volume', currentState.volume);
       updateSliderUI('brightness', currentState.brightness);
+      updateMetricsUI(currentState.metrics);
     }
   } else if (data.type === 'taskbar_update') {
     currentState.open_windows = data.windows;
     renderTaskbarBoard();
   }
+}
+
+function applyGridCssVariables() {
+  if (!currentConfig) return;
+  const cols = currentConfig.grid_columns || 4;
+  const rows = currentConfig.grid_rows || 3;
+  document.documentElement.style.setProperty('--grid-cols', cols);
+  document.documentElement.style.setProperty('--grid-rows', rows);
 }
 
 function submitPinAuth() {
@@ -194,7 +208,48 @@ function renderAllBoards() {
 
     page.appendChild(titleBar);
 
-    // Fixed Matrix Grid (4 cols x 3 rows = 12 slots by default)
+    // Main Deck Body Layout (Left System Metrics Panel + Right Button Matrix Grid)
+    const bodyLayout = document.createElement('div');
+    bodyLayout.className = 'deck-body-layout';
+
+    // Left System Metrics Panel (Reference Image 1)
+    const showMetrics = currentConfig.show_metrics !== false;
+    if (showMetrics) {
+      const metricsPanel = document.createElement('div');
+      metricsPanel.className = 'metrics-side-panel';
+      metricsPanel.id = `metricsPanel_${bIdx}`;
+
+      const m = currentState.metrics || { cpu_temp: 45, cpu_load: 15, gpu_temp: 50, gpu_load: 20, ram_used_gb: 8.0, ram_total_gb: 16.0, ram_percent: 50 };
+
+      metricsPanel.innerHTML = `
+        <div class="metric-gauge-card">
+          <div class="gauge-circle gauge-cpu" id="gaugeCpuCircle">${m.cpu_temp}°C</div>
+          <div class="gauge-info">
+            <span class="gauge-title">CPU METRICS</span>
+            <span class="gauge-val" id="gaugeCpuVal">${m.cpu_load}% Load</span>
+          </div>
+        </div>
+
+        <div class="metric-gauge-card">
+          <div class="gauge-circle gauge-gpu" id="gaugeGpuCircle">${m.gpu_temp}°C</div>
+          <div class="gauge-info">
+            <span class="gauge-title">GPU METRICS</span>
+            <span class="gauge-val" id="gaugeGpuVal">${m.gpu_load}% Load</span>
+          </div>
+        </div>
+
+        <div class="metric-gauge-card">
+          <div class="gauge-circle gauge-ram" id="gaugeRamCircle">${m.ram_percent}%</div>
+          <div class="gauge-info">
+            <span class="gauge-title">RAM USAGE</span>
+            <span class="gauge-val" id="gaugeRamVal">${m.ram_used_gb}/${m.ram_total_gb} GB</span>
+          </div>
+        </div>
+      `;
+      bodyLayout.appendChild(metricsPanel);
+    }
+
+    // Configurable Matrix Grid (e.g. 4x3, 6x6, 6x7, 8x7)
     const grid = document.createElement('div');
     grid.className = 'deck-grid';
 
@@ -228,11 +283,29 @@ function renderAllBoards() {
       }
     }
 
-    page.appendChild(grid);
+    bodyLayout.appendChild(grid);
+    page.appendChild(bodyLayout);
     container.appendChild(page);
   });
 
   updateBoardTransform();
+}
+
+function updateMetricsUI(metrics) {
+  if (!metrics) return;
+  const cpuCircle = document.getElementById('gaugeCpuCircle');
+  const cpuVal = document.getElementById('gaugeCpuVal');
+  const gpuCircle = document.getElementById('gaugeGpuCircle');
+  const gpuVal = document.getElementById('gaugeGpuVal');
+  const ramCircle = document.getElementById('gaugeRamCircle');
+  const ramVal = document.getElementById('gaugeRamVal');
+
+  if (cpuCircle) cpuCircle.innerText = `${metrics.cpu_temp}°C`;
+  if (cpuVal) cpuVal.innerText = `${metrics.cpu_load}% Load`;
+  if (gpuCircle) gpuCircle.innerText = `${metrics.gpu_temp}°C`;
+  if (gpuVal) gpuVal.innerText = `${metrics.gpu_load}% Load`;
+  if (ramCircle) ramCircle.innerText = `${metrics.ram_percent}%`;
+  if (ramVal) ramVal.innerText = `${metrics.ram_used_gb}/${metrics.ram_total_gb} GB`;
 }
 
 function createDeckItemElement(item, bIdx, itemIdx) {
@@ -349,6 +422,36 @@ function updateSliderUI(key, val) {
       if (label) label.innerText = `${val}%`;
     }
   });
+}
+
+// Advanced Settings Modal Actions
+function openSettingsModal() {
+  document.getElementById('settingsGridCols').value = currentConfig.grid_columns || 4;
+  document.getElementById('settingsGridRows').value = currentConfig.grid_rows || 3;
+  document.getElementById('settingsShowMetrics').value = currentConfig.show_metrics !== false ? "true" : "false";
+  document.getElementById('settingsPin').value = currentConfig.pin || "8484";
+  document.getElementById('settingsModal').classList.add('active');
+}
+
+function closeSettingsModal() {
+  document.getElementById('settingsModal').classList.remove('active');
+}
+
+function saveAdvancedSettings() {
+  const cols = parseInt(document.getElementById('settingsGridCols').value) || 4;
+  const rows = parseInt(document.getElementById('settingsGridRows').value) || 3;
+  const showMetrics = document.getElementById('settingsShowMetrics').value === "true";
+  const pin = document.getElementById('settingsPin').value.trim() || "8484";
+
+  currentConfig.grid_columns = cols;
+  currentConfig.grid_rows = rows;
+  currentConfig.show_metrics = showMetrics;
+  currentConfig.pin = pin;
+
+  applyGridCssVariables();
+  saveConfigToServer();
+  closeSettingsModal();
+  renderAllBoards();
 }
 
 // Board Navigation (Touch Swipe, Carousel Buttons, Mouse Drag, Keyboard Arrows)
