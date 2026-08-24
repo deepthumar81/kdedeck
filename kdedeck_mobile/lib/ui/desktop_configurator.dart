@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'dynamic_matrix_grid.dart';
 import 'package:provider/provider.dart';
@@ -376,46 +377,53 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
   }
 
   Widget _buildSliderPreviewCard(Map<String, dynamic> item, int itemIdx, int spanCols, int spanRows, String label, IconData icon, Color color) {
-    return RepaintBoundary(
-      child: Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cardCol,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(color: darkShadow.withOpacity(0.6), offset: const Offset(4, 4), blurRadius: 8),
-          BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-4, -4), blurRadius: 8),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: () => _openItemEditorDialog(itemIdx),
-          child: Column(
-            children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(height: 4),
-              Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
-              const SizedBox(height: 8),
-              Expanded(
-                child: Container(
-                  width: 8,
-                  decoration: BoxDecoration(color: bgCol, borderRadius: BorderRadius.circular(10)),
-                  child: Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Container(
-                      height: spanRows * 15.0, // Mockup height
-                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          child: Container(
+            decoration: BoxDecoration(
+              color: cardCol,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(color: darkShadow.withOpacity(0.6), offset: const Offset(4, 4), blurRadius: 8),
+                BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-4, -4), blurRadius: 8),
+              ],
+            ),
           ),
         ),
-      ),
-      ),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => _openItemEditorDialog(itemIdx),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                children: [
+                  Icon(icon, color: color, size: 20),
+                  const SizedBox(height: 4),
+                  Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Container(
+                      width: 8,
+                      decoration: BoxDecoration(color: bgCol, borderRadius: BorderRadius.circular(10)),
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Container(
+                          height: spanRows * 15.0, // Mockup height
+                          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -426,71 +434,83 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
 
     final isMultiSpan = spanCols > 1 || spanRows > 1;
 
-    return RepaintBoundary(
-      child: Container(
-      decoration: BoxDecoration(
-        color: cardCol,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(color: darkShadow.withOpacity(0.7), offset: const Offset(4, 4), blurRadius: 8),
-          BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: () => _openItemEditorDialog(itemIdx),
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(_getIconData(item['icon']), size: isMultiSpan ? 32 : 24, color: accentCol),
-                const SizedBox(height: 6),
-                Text(
-                  item['title'] ?? 'Button',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: textPrimary),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (isMultiSpan)
-                  Text(
-                    "${spanCols}x${spanRows} Tile",
-                    style: TextStyle(fontSize: 9, color: accentCol, fontWeight: FontWeight.w900),
-                  ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          child: Container(
+            decoration: BoxDecoration(
+              color: cardCol,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(color: darkShadow.withOpacity(0.7), offset: const Offset(4, 4), blurRadius: 8),
+                BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
               ],
             ),
           ),
         ),
-      ),
-      ),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => _openItemEditorDialog(itemIdx),
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_getIconData(item['icon']), size: isMultiSpan ? 32 : 24, color: accentCol),
+                  const SizedBox(height: 6),
+                  Text(
+                    item['title'] ?? 'Button',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: textPrimary),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (isMultiSpan)
+                    Text(
+                      "${spanCols}x${spanRows} Tile",
+                      style: TextStyle(fontSize: 9, color: accentCol, fontWeight: FontWeight.w900),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildNeumorphicEmptyTile() {
-    return RepaintBoundary(
-      child: Container(
-      decoration: BoxDecoration(
-        color: cardCol,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(3, 3), blurRadius: 6),
-          BoxShadow(color: lightShadow.withOpacity(0.4), offset: const Offset(-3, -3), blurRadius: 6),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: () => _openItemEditorDialog(null),
-          child: Center(
-            child: Icon(Icons.add_rounded, color: textSecondary.withOpacity(0.4), size: 24),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          child: Container(
+            decoration: BoxDecoration(
+              color: cardCol,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(3, 3), blurRadius: 6),
+                BoxShadow(color: lightShadow.withOpacity(0.4), offset: const Offset(-3, -3), blurRadius: 6),
+              ],
+            ),
           ),
         ),
-      ),
-      ),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () {
+              _openItemEditorDialog(null);
+            },
+            child: Center(
+              child: Icon(Icons.add_rounded, color: textSecondary.withOpacity(0.4), size: 24),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -524,7 +544,6 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
     final actionOptions = [
       "launch_app", "open_url", "audio_volume", "brightness", "audio_mute_toggle", "mpris_action", "kde_action"
     ];
-    if (!actionOptions.contains(selectedAction)) selectedAction = "launch_app";
 
     showDialog(
       context: context,
@@ -555,6 +574,8 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                         DropdownMenuItem(value: "button", child: Text("Standard Button", style: TextStyle(color: textPrimary))),
                         DropdownMenuItem(value: "volume_slider", child: Text("Volume Slider", style: TextStyle(color: textPrimary))),
                         DropdownMenuItem(value: "brightness_slider", child: Text("Brightness Slider", style: TextStyle(color: textPrimary))),
+                        if (!["button", "volume_slider", "brightness_slider"].contains(selectedType))
+                          DropdownMenuItem(value: selectedType, child: Text("Custom: $selectedType", style: TextStyle(color: textPrimary))),
                       ],
                       onChanged: (val) {
                         if (val != null) {
@@ -608,6 +629,8 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                         DropdownMenuItem(value: "2x2", child: Text("Big Square Tile (2x2)", style: TextStyle(color: textPrimary))),
                         DropdownMenuItem(value: "1x3", child: Text("Vertical Slider (1x3)", style: TextStyle(color: textPrimary))),
                         DropdownMenuItem(value: "1x4", child: Text("Tall Vertical Slider (1x4)", style: TextStyle(color: textPrimary))),
+                        if (!["1x1", "2x1", "2x2", "1x3", "1x4"].contains("${selectedSpanCols}x${selectedSpanRows}"))
+                          DropdownMenuItem(value: "${selectedSpanCols}x${selectedSpanRows}", child: Text("Custom (${selectedSpanCols}x${selectedSpanRows})", style: TextStyle(color: textPrimary))),
                       ],
                       onChanged: (val) {
                         if (val != null) {
@@ -639,8 +662,10 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                           DropdownMenuItem(value: "audio_volume", child: Text("Audio Volume Control", style: TextStyle(color: textPrimary))),
                           DropdownMenuItem(value: "brightness", child: Text("Brightness Control", style: TextStyle(color: textPrimary))),
                           DropdownMenuItem(value: "audio_mute_toggle", child: Text("Toggle Audio Mute", style: TextStyle(color: textPrimary))),
-                          DropdownMenuItem(value: "mpris_action", child: Text("Media Control (Play/Next)", style: TextStyle(color: textPrimary))),
-                          DropdownMenuItem(value: "kde_action", child: Text("KDE Shortcut (Lock/NightLight)", style: TextStyle(color: textPrimary))),
+                          DropdownMenuItem(value: "mpris_action", child: Text("Media Control", style: TextStyle(color: textPrimary))),
+                          DropdownMenuItem(value: "kde_action", child: Text("KDE System Action", style: TextStyle(color: textPrimary))),
+                          if (!actionOptions.contains(selectedAction))
+                            DropdownMenuItem(value: selectedAction, child: Text("Custom: $selectedAction", style: TextStyle(color: textPrimary))),
                         ],
                         onChanged: (val) {
                           if (val != null) setDialogState(() => selectedAction = val);

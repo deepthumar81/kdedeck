@@ -185,70 +185,77 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
     final double sliderVal = isVolume ? ws.currentVolume.toDouble().clamp(0.0, 100.0) : ws.currentBrightness.toDouble().clamp(5.0, 100.0);
     final minVal = isVolume ? 0.0 : 5.0;
 
-    return RepaintBoundary(
-      child: Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(4, 4), blurRadius: 8),
-          BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
-        ],
-      ),
-      child: Column(
-        children: [
-          GestureDetector(
-            onTap: () {
-              HapticFeedback.mediumImpact();
-              if (isVolume) ws.triggerAction("audio_mute_toggle");
-            },
-            child: Container(
-              padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                color: bgColor,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(color: darkShadow.withOpacity(0.8), offset: const Offset(2, 2), blurRadius: 4),
-                  BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-2, -2), blurRadius: 4),
-                ],
-              ),
-              child: Icon(icon, color: color, size: 16),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          child: Container(
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(4, 4), blurRadius: 8),
+                BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
+              ],
             ),
           ),
-          const SizedBox(height: 2),
-          Text(valStr, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: color)),
-          const SizedBox(height: 4),
-          Expanded(
-            child: RotatedBox(
-              quarterTurns: 3,
-              child: SliderTheme(
-                data: SliderThemeData(
-                  trackHeight: 9,
-                  thumbShape: SliderComponentShape.noThumb,
-                  activeTrackColor: color,
-                  inactiveTrackColor: Colors.black38,
-                  overlayShape: SliderComponentShape.noOverlay,
-                ),
-                child: Slider(
-                  value: sliderVal,
-                  min: minVal,
-                  max: 100,
-                  onChanged: (val) {
-                    HapticFeedback.selectionClick();
-                    if (isVolume) {
-                      ws.triggerAction("audio_volume", value: val.toInt());
-                    } else {
-                      ws.triggerAction("brightness", value: val.toInt());
-                    }
-                  },
+        ),
+        Padding(
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            children: [
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.mediumImpact();
+                  if (isVolume) ws.triggerAction("audio_mute_toggle");
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    color: bgColor,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(color: darkShadow.withOpacity(0.8), offset: const Offset(2, 2), blurRadius: 4),
+                      BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-2, -2), blurRadius: 4),
+                    ],
+                  ),
+                  child: Icon(icon, color: color, size: 16),
                 ),
               ),
-            ),
+              const SizedBox(height: 2),
+              Text(valStr, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: color)),
+              const SizedBox(height: 4),
+              Expanded(
+                child: RotatedBox(
+                  quarterTurns: 3,
+                  child: SliderTheme(
+                    data: SliderThemeData(
+                      trackHeight: 9,
+                      thumbShape: SliderComponentShape.noThumb,
+                      activeTrackColor: color,
+                      inactiveTrackColor: Colors.black38,
+                      overlayShape: SliderComponentShape.noOverlay,
+                    ),
+                    child: Slider(
+                      value: sliderVal,
+                      min: minVal,
+                      max: 100,
+                      onChanged: (val) {
+                        HapticFeedback.selectionClick();
+                        if (isVolume) {
+                          ws.triggerAction("audio_volume", value: val.toInt());
+                        } else {
+                          ws.triggerAction("brightness", value: val.toInt());
+                        }
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
-      ),
+        ),
+      ],
     );
   }
 
@@ -260,66 +267,76 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
 
     final isMultiSpan = spanCols > 1 || spanRows > 1;
 
-    return RepaintBoundary(
-      child: Container(
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(3, 3), blurRadius: 6),
-          BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-3, -3), blurRadius: 6),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () {
-            HapticFeedback.mediumImpact();
-            ws.triggerAction(item['action'], payload: item['payload'], itemId: item['id']);
-          },
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(_getIconData(item['icon']), size: isMultiSpan ? 28 : 20, color: accentBlue),
-                const SizedBox(height: 3),
-                Text(
-                  item['title'] ?? 'Button',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: isMultiSpan ? 11 : 9,
-                    fontWeight: FontWeight.w800,
-                    color: textPrimary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          child: Container(
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(3, 3), blurRadius: 6),
+                BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-3, -3), blurRadius: 6),
               ],
             ),
           ),
         ),
-      ),
-      ),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+              HapticFeedback.mediumImpact();
+              ws.triggerAction(item['action'], payload: item['payload'], itemId: item['id']);
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_getIconData(item['icon']), size: isMultiSpan ? 28 : 20, color: accentBlue),
+                  const SizedBox(height: 3),
+                  Text(
+                    item['title'] ?? 'Button',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: isMultiSpan ? 11 : 9,
+                      fontWeight: FontWeight.w800,
+                      color: textPrimary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildEmptyNeumorphicSlot() {
-    return RepaintBoundary(
-      child: Container(
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(2, 2), blurRadius: 4),
-          BoxShadow(color: lightShadow.withOpacity(0.3), offset: const Offset(-2, -2), blurRadius: 4),
-        ],
-      ),
-      child: Center(
-        child: Icon(Icons.add_rounded, color: textPrimary.withOpacity(0.12), size: 16),
-      ),
-      ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          child: Container(
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(2, 2), blurRadius: 4),
+                BoxShadow(color: lightShadow.withOpacity(0.3), offset: const Offset(-2, -2), blurRadius: 4),
+              ],
+            ),
+          ),
+        ),
+        Center(
+          child: Icon(Icons.add_rounded, color: textPrimary.withOpacity(0.12), size: 16),
+        ),
+      ],
     );
   }
 
