@@ -3,10 +3,12 @@ let currentConfig = null;
 let currentState = { volume: 50, brightness: 70, open_windows: [] };
 let activeBoardIndex = 0;
 let isEditMode = false;
+let installedAppsCache = [];
 
 let touchStartX = 0;
 let touchEndX = 0;
 let editingItemRef = null;
+let sliderDebounceTimers = {};
 
 // Register Service Worker for PWA
 if ('serviceWorker' in navigator) {
@@ -23,6 +25,21 @@ function cycleTheme() {
   document.body.classList.add(THEMES[currentThemeIdx]);
 }
 
+// Toast Notifications
+function showToast(message, type = 'error') {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `<span>⚠️ ${message}</span>`;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.remove();
+  }, 4000);
+}
+
 // WebSocket Initialization
 function initWebSocket() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -32,6 +49,11 @@ function initWebSocket() {
 
   ws.onopen = () => {
     console.log('Connected to KdeDeck Server');
+    // Send stored token if available
+    const savedToken = localStorage.getItem('kdedeck_token');
+    if (savedToken) {
+      ws.send(JSON.stringify({ type: 'authenticate', token: savedToken }));
+    }
   };
 
   ws.onmessage = (event) => {
@@ -60,6 +82,22 @@ function handleServerMessage(data) {
     currentConfig = data.config;
     if (data.state) currentState = { ...currentState, ...data.state };
     renderAllBoards();
+
+    // Check PIN requirement
+    const savedToken = localStorage.getItem('kdedeck_token');
+    if (data.pin_required && !savedToken) {
+      document.getElementById('pinModal').classList.add('active');
+    }
+  } else if (data.type === 'auth_success') {
+    localStorage.setItem('kdedeck_token', data.token);
+    document.getElementById('pinModal').classList.remove('active');
+  } else if (data.type === 'auth_error') {
+    showToast(data.message || 'Invalid PIN', 'error');
+  } else if (data.type === 'action_warning' || data.type === 'action_error') {
+    showToast(data.message, data.type === 'action_warning' ? 'warning' : 'error');
+    if (data.item_id) {
+      markItemError(data.item_id);
+    }
   } else if (data.type === 'state_update') {
     currentState[data.key] = data.value;
     updateSliderUI(data.key, data.value);
@@ -73,6 +111,24 @@ function handleServerMessage(data) {
   } else if (data.type === 'taskbar_update') {
     currentState.open_windows = data.windows;
     renderTaskbarBoard();
+  }
+}
+
+function submitPinAuth() {
+  const pin = document.getElementById('inputPin').value;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'authenticate', pin: pin }));
+  }
+}
+
+function markItemError(itemId) {
+  const itemEl = document.getElementById(`item_${itemId}`);
+  if (itemEl && !itemEl.querySelector('.error-badge')) {
+    const badge = document.createElement('div');
+    badge.className = 'error-badge';
+    badge.innerText = '!';
+    itemEl.appendChild(badge);
+    setTimeout(() => badge.remove(), 4000);
   }
 }
 
@@ -98,7 +154,18 @@ function renderAllBoards() {
 
     const titleBar = document.createElement('div');
     titleBar.className = 'board-title-bar';
-    titleBar.innerText = board.title;
+    titleBar.innerHTML = `<span>${board.title}</span>`;
+
+    if (isEditMode) {
+      const delBoardBtn = document.createElement('button');
+      delBoardBtn.className = 'action-btn';
+      delBoardBtn.style.padding = '2px 8px';
+      delBoardBtn.style.fontSize = '0.75rem';
+      delBoardBtn.innerText = 'Delete Board';
+      delBoardBtn.onclick = () => deleteBoard(bIdx);
+      titleBar.appendChild(delBoardBtn);
+    }
+
     page.appendChild(titleBar);
 
     const grid = document.createElement('div');
@@ -123,13 +190,14 @@ function renderAllBoards() {
 
 function createDeckItemElement(item, bIdx, itemIdx) {
   const div = document.createElement('div');
+  div.id = `item_${item.id || itemIdx}`;
 
   if (item.type === 'slider') {
     div.className = `deck-item slider-item ${item.color || 'gradient-blue'}`;
     const currentVal = item.action === 'audio_volume' ? currentState.volume : currentState.brightness;
 
     div.innerHTML = `
-      <div class="item-icon">${getIconSvg(item.icon)}</div>
+      <div class="item-icon">${renderIconHTML(item.icon)}</div>
       <div class="slider-container">
         <div class="slider-header">
           <span>${item.title}</span>
@@ -142,7 +210,7 @@ function createDeckItemElement(item, bIdx, itemIdx) {
   } else {
     div.className = `deck-item ${item.color || 'gradient-blue'}`;
     div.innerHTML = `
-      <div class="item-icon">${getIconSvg(item.icon)}</div>
+      <div class="item-icon">${renderIconHTML(item.icon)}</div>
       <div class="item-label">${item.title}</div>
     `;
 
@@ -151,12 +219,21 @@ function createDeckItemElement(item, bIdx, itemIdx) {
       if (isEditMode) {
         openEditModal(bIdx, itemIdx);
       } else {
-        sendAction(item.action, item.payload);
+        sendAction(item.action, item.payload, null, item.id);
       }
     };
   }
 
   return div;
+}
+
+function renderIconHTML(iconName) {
+  if (!iconName) return getIconSvg('box');
+  // Check if system icon exists via API image or SVG fallback
+  if (ICONS[iconName]) {
+    return ICONS[iconName];
+  }
+  return `<img src="/api/icon/${encodeURIComponent(iconName)}" class="app-icon-img" onerror="this.onerror=null; this.outerHTML=\`${getIconSvg('box')}\`;">`;
 }
 
 function renderTaskbarBoard() {
@@ -175,7 +252,7 @@ function renderTaskbarItems(grid) {
     const div = document.createElement('div');
     div.className = 'deck-item gradient-indigo';
     div.innerHTML = `
-      <div class="item-icon">${getIconSvg(win.icon || 'window')}</div>
+      <div class="item-icon">${renderIconHTML(win.icon)}</div>
       <div class="item-label">${win.title}</div>
     `;
     div.onclick = () => {
@@ -186,22 +263,31 @@ function renderTaskbarItems(grid) {
   });
 }
 
-function sendAction(action, payload=null, value=null) {
+function sendAction(action, payload=null, value=null, itemId=null) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       type: 'trigger_action',
       action: action,
       payload: payload,
-      value: value
+      value: value,
+      item_id: itemId
     }));
   }
 }
 
+// 150ms Client-Side Slider Debouncing
 function onSliderInput(e, action, id) {
   const val = e.target.value;
   const label = document.getElementById(`val_${id}`);
   if (label) label.innerText = `${val}%`;
-  sendAction(action, null, val);
+
+  if (sliderDebounceTimers[id]) {
+    clearTimeout(sliderDebounceTimers[id]);
+  }
+
+  sliderDebounceTimers[id] = setTimeout(() => {
+    sendAction(action, null, val, id);
+  }, 150);
 }
 
 function updateSliderUI(key, val) {
@@ -233,14 +319,12 @@ mainContainer.addEventListener('touchend', e => {
 
 function handleSwipe() {
   const diff = touchStartX - touchEndX;
-  if (Math.abs(diff) > 50) { // Threshold 50px
+  if (Math.abs(diff) > 50) {
     if (diff > 0) {
-      // Swiped Left -> Next Board
       if (currentConfig && activeBoardIndex < currentConfig.boards.length - 1) {
         switchBoard(activeBoardIndex + 1);
       }
     } else {
-      // Swiped Right -> Prev Board
       if (activeBoardIndex > 0) {
         switchBoard(activeBoardIndex - 1);
       }
@@ -267,11 +351,103 @@ function updateBoardTransform() {
   }
 }
 
-// Edit Mode & Modal
+// Edit Mode & System Apps Fetching
 function toggleEditMode() {
   isEditMode = !isEditMode;
   document.getElementById('editBtnText').innerText = isEditMode ? 'Done' : 'Edit';
-  document.getElementById('editToggleBtn').style.background = isEditMode ? 'var(--accent)' : '';
+  document.getElementById('editToggleBtn').classList.toggle('active', isEditMode);
+
+  document.getElementById('addBtnControl').style.display = isEditMode ? 'block' : 'none';
+  document.getElementById('addBoardControl').style.display = isEditMode ? 'block' : 'none';
+
+  if (isEditMode && installedAppsCache.length === 0) {
+    fetchInstalledApps();
+  }
+
+  renderAllBoards();
+}
+
+function fetchInstalledApps() {
+  fetch('/api/apps')
+    .then(res => res.json())
+    .then(data => {
+      if (data.apps) {
+        installedAppsCache = data.apps;
+        populateAppPickerDropdown();
+      }
+    })
+    .catch(err => console.error('Error fetching system apps:', err));
+}
+
+function populateAppPickerDropdown() {
+  const picker = document.getElementById('systemAppPicker');
+  if (!picker) return;
+  picker.innerHTML = `<option value="">-- Choose Installed Application --</option>`;
+
+  installedAppsCache.forEach(app => {
+    const opt = document.createElement('option');
+    opt.value = app.exec;
+    opt.dataset.name = app.name;
+    opt.dataset.icon = app.icon;
+    opt.innerText = `${app.name} (${app.exec})`;
+    picker.appendChild(opt);
+  });
+}
+
+function onSystemAppPick() {
+  const picker = document.getElementById('systemAppPicker');
+  const selectedOpt = picker.options[picker.selectedIndex];
+  if (!selectedOpt || !selectedOpt.value) return;
+
+  document.getElementById('editLabel').value = selectedOpt.dataset.name || '';
+  document.getElementById('editActionType').value = 'launch_app';
+  document.getElementById('editPayload').value = selectedOpt.value;
+  document.getElementById('editIcon').value = selectedOpt.dataset.icon || 'terminal';
+  onActionTypeChange();
+}
+
+function addNewItemToBoard() {
+  if (!currentConfig || !currentConfig.boards[activeBoardIndex]) return;
+  const newItem = {
+    type: 'button',
+    id: `item_${Date.now()}`,
+    title: 'New Button',
+    action: 'launch_app',
+    payload: 'konsole',
+    icon: 'terminal',
+    color: 'gradient-blue'
+  };
+
+  currentConfig.boards[activeBoardIndex].items.push(newItem);
+  saveConfigToServer();
+  renderAllBoards();
+}
+
+function addNewBoard() {
+  if (!currentConfig) return;
+  const newBoard = {
+    id: `board_${Date.now()}`,
+    title: `Board ${currentConfig.boards.length + 1}`,
+    icon: 'layers',
+    items: []
+  };
+
+  currentConfig.boards.push(newBoard);
+  saveConfigToServer();
+  switchBoard(currentConfig.boards.length - 1);
+  renderAllBoards();
+}
+
+function deleteBoard(bIdx) {
+  if (!currentConfig || currentConfig.boards.length <= 1) {
+    showToast('Cannot delete the last board', 'warning');
+    return;
+  }
+
+  currentConfig.boards.splice(bIdx, 1);
+  saveConfigToServer();
+  activeBoardIndex = Math.max(0, activeBoardIndex - 1);
+  renderAllBoards();
 }
 
 function openEditModal(bIdx, itemIdx) {
@@ -295,11 +471,17 @@ function closeModal() {
 function onActionTypeChange() {
   const type = document.getElementById('editActionType').value;
   const payloadGroup = document.getElementById('payloadGroup');
+  const kdePresetGroup = document.getElementById('kdeActionPresetGroup');
 
-  if (type === 'launch_app' || type === 'open_url' || type === 'mpris_action' || type === 'kde_action') {
+  if (type === 'launch_app' || type === 'open_url' || type === 'mpris_action') {
     payloadGroup.style.display = 'flex';
+    kdePresetGroup.style.display = 'none';
+  } else if (type === 'kde_action') {
+    payloadGroup.style.display = 'flex';
+    kdePresetGroup.style.display = 'flex';
   } else {
     payloadGroup.style.display = 'none';
+    kdePresetGroup.style.display = 'none';
   }
 }
 
@@ -314,16 +496,27 @@ function saveItemChanges() {
   item.icon = document.getElementById('editIcon').value;
   item.color = document.getElementById('editColor').value;
 
-  // Save to server
+  saveConfigToServer();
+  closeModal();
+  renderAllBoards();
+}
+
+function deleteCurrentItem() {
+  if (!editingItemRef) return;
+  const { bIdx, itemIdx } = editingItemRef;
+  currentConfig.boards[bIdx].items.splice(itemIdx, 1);
+  saveConfigToServer();
+  closeModal();
+  renderAllBoards();
+}
+
+function saveConfigToServer() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       type: 'save_config',
       config: currentConfig
     }));
   }
-
-  closeModal();
-  renderAllBoards();
 }
 
 // Start WebSocket on Load

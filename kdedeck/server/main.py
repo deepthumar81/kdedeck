@@ -3,6 +3,7 @@ import sys
 import json
 import logging
 import asyncio
+import secrets
 from aiohttp import web
 
 # Set up logging
@@ -14,13 +15,13 @@ logger = logging.getLogger("kdedeck.server")
 
 # Import server components
 from kdedeck.server.config_manager import ConfigManager
+from kdedeck.server.app_scanner import AppScanner
 from kdedeck.server.plugins.audio_brightness import AudioBrightnessPlugin
 from kdedeck.server.plugins.mpris import MPRISPlugin
 from kdedeck.server.plugins.kde_connect import KDEConnectPlugin
 from kdedeck.server.plugins.kwin_taskbar import KWinTaskbarPlugin
 from kdedeck.server.plugins.exec_cmd import ExecCmdPlugin
 
-# Absolute path to web static directory
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(BASE_DIR, "web")
 
@@ -29,6 +30,8 @@ class KdeDeckServer:
         self.port = port
         self.config_mgr = ConfigManager()
         self.sockets = set()
+        self.authenticated_tokens = set()
+        self.pin = self.config_mgr.get_config().get("pin", "8484")
 
     async def index_handler(self, request):
         index_file = os.path.join(WEB_DIR, "index.html")
@@ -41,17 +44,45 @@ class KdeDeckServer:
             return web.FileResponse(file_path)
         return web.FileResponse(os.path.join(WEB_DIR, "index.html"))
 
+    async def apps_api_handler(self, request):
+        """API returning installed system desktop applications."""
+        apps = AppScanner.get_installed_apps()
+        return web.json_response({"status": "ok", "apps": apps})
+
+    async def icon_api_handler(self, request):
+        """API serving desktop app icons (PNG/SVG)."""
+        icon_name = request.match_info.get("name", "")
+        icon_path = AppScanner.find_icon_file(icon_name)
+        if icon_path and os.path.exists(icon_path):
+            content_type = "image/svg+xml" if icon_path.endswith(".svg") else "image/png"
+            return web.FileResponse(icon_path, headers={"Content-Type": content_type})
+        # Fallback empty 404 or transparent 1px PNG
+        return web.Response(status=404, text="Icon not found")
+
+    async def auth_api_handler(self, request):
+        """API verifying PIN authentication."""
+        try:
+            data = await request.json()
+            input_pin = str(data.get("pin", "")).strip()
+            if input_pin == self.pin:
+                token = secrets.token_hex(16)
+                self.authenticated_tokens.add(token)
+                return web.json_response({"status": "ok", "token": token})
+            return web.json_response({"status": "error", "message": "Invalid PIN"}, status=401)
+        except Exception:
+            return web.json_response({"status": "error", "message": "Bad request"}, status=400)
+
     async def ws_handler(self, request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self.sockets.add(ws)
         logger.info(f"New client connected from {request.remote}. Total clients: {len(self.sockets)}")
 
-        # Send initial config and state
         config = self.config_mgr.get_config()
         await ws.send_json({
             "type": "init_state",
             "config": config,
+            "pin_required": bool(self.pin),
             "state": {
                 "volume": AudioBrightnessPlugin.get_volume(),
                 "brightness": AudioBrightnessPlugin.get_brightness(),
@@ -67,7 +98,7 @@ class KdeDeckServer:
                         msg_type = data.get("type")
                         await self.handle_client_message(ws, msg_type, data)
                     except Exception as e:
-                        logger.error(f"Error parsing message '{msg.data}': {e}")
+                        logger.error(f"Error parsing message: {e}")
                 elif msg.type == web.WSMsgType.ERROR:
                     logger.error(f"WebSocket error: {ws.exception()}")
         finally:
@@ -76,46 +107,73 @@ class KdeDeckServer:
         return ws
 
     async def handle_client_message(self, ws, msg_type, data):
-        if msg_type == "trigger_action":
+        if msg_type == "authenticate":
+            token = data.get("token")
+            input_pin = str(data.get("pin", "")).strip()
+            if token in self.authenticated_tokens or input_pin == self.pin:
+                new_token = token or secrets.token_hex(16)
+                self.authenticated_tokens.add(new_token)
+                await ws.send_json({"type": "auth_success", "token": new_token})
+            else:
+                await ws.send_json({"type": "auth_error", "message": "Invalid Security PIN"})
+
+        elif msg_type == "trigger_action":
             action = data.get("action")
             payload = data.get("payload")
             val = data.get("value")
+            item_id = data.get("item_id")
 
             logger.info(f"Action triggered: {action} (payload={payload}, value={val})")
 
-            # Route actions
-            if action == "audio_volume":
-                new_vol = await AudioBrightnessPlugin.set_volume(val)
-                await self.broadcast({"type": "state_update", "key": "volume", "value": new_vol})
+            try:
+                if action == "audio_volume":
+                    new_vol = await AudioBrightnessPlugin.set_volume(val)
+                    await self.broadcast({"type": "state_update", "key": "volume", "value": new_vol})
 
-            elif action == "audio_mute_toggle":
-                is_muted = await AudioBrightnessPlugin.toggle_mute()
-                await self.broadcast({"type": "state_update", "key": "muted", "value": is_muted})
+                elif action == "audio_mute_toggle":
+                    is_muted = await AudioBrightnessPlugin.toggle_mute()
+                    await self.broadcast({"type": "state_update", "key": "muted", "value": is_muted})
 
-            elif action == "brightness":
-                new_b = await AudioBrightnessPlugin.set_brightness(val)
-                await self.broadcast({"type": "state_update", "key": "brightness", "value": new_b})
+                elif action == "brightness":
+                    new_b = await AudioBrightnessPlugin.set_brightness(val)
+                    await self.broadcast({"type": "state_update", "key": "brightness", "value": new_b})
 
-            elif action == "mpris_action":
-                await MPRISPlugin.control(payload)
+                elif action == "mpris_action":
+                    await MPRISPlugin.control(payload)
 
-            elif action == "kdeconnect_ring":
-                await KDEConnectPlugin.ring_phone()
+                elif action == "kdeconnect_ring":
+                    devices = KDEConnectPlugin.get_paired_devices()
+                    if not devices:
+                        await ws.send_json({
+                            "type": "action_warning",
+                            "item_id": item_id,
+                            "message": "KDE Connect: No paired phone found"
+                        })
+                    else:
+                        await KDEConnectPlugin.ring_phone()
 
-            elif action == "kdeconnect_clipboard":
-                await KDEConnectPlugin.sync_clipboard()
+                elif action == "kdeconnect_clipboard":
+                    await KDEConnectPlugin.sync_clipboard()
 
-            elif action == "launch_app":
-                await ExecCmdPlugin.launch_app(payload)
+                elif action == "launch_app":
+                    await ExecCmdPlugin.launch_app(payload)
 
-            elif action == "open_url":
-                await ExecCmdPlugin.open_url(payload)
+                elif action == "open_url":
+                    await ExecCmdPlugin.open_url(payload)
 
-            elif action == "kde_action":
-                await ExecCmdPlugin.kde_action(payload)
+                elif action == "kde_action":
+                    await ExecCmdPlugin.kde_action(payload)
 
-            elif action == "focus_window":
-                await KWinTaskbarPlugin.focus_window(payload)
+                elif action == "focus_window":
+                    await KWinTaskbarPlugin.focus_window(payload)
+
+            except Exception as err:
+                logger.error(f"Error executing action {action}: {err}")
+                await ws.send_json({
+                    "type": "action_error",
+                    "item_id": item_id,
+                    "message": f"Action Failed: {str(err)}"
+                })
 
         elif msg_type == "save_config":
             new_config = data.get("config")
@@ -135,9 +193,9 @@ class KdeDeckServer:
                 pass
 
     async def background_state_poll(self):
-        """Polls system state every 4 seconds and broadcasts updates."""
+        """Polls system state every 5 seconds without blocking CPU."""
         while True:
-            await asyncio.sleep(4)
+            await asyncio.sleep(5)
             if self.sockets:
                 windows = KWinTaskbarPlugin.get_open_windows()
                 vol = AudioBrightnessPlugin.get_volume()
@@ -154,6 +212,9 @@ class KdeDeckServer:
     async def start(self):
         app = web.Application()
         app.router.add_get("/ws", self.ws_handler)
+        app.router.add_get("/api/apps", self.apps_api_handler)
+        app.router.add_get("/api/icon/{name}", self.icon_api_handler)
+        app.router.add_post("/api/auth", self.auth_api_handler)
         app.router.add_get("/", self.index_handler)
         app.router.add_get("/{path:.*}", self.static_handler)
 
@@ -169,7 +230,8 @@ class KdeDeckServer:
 
         logger.info("=" * 60)
         logger.info(f"🚀 KdeDeck Server running on http://0.0.0.0:{self.port}")
-        logger.info(f"📱 Open http://<YOUR_PC_IP>:{self.port} on your Android phone browser!")
+        logger.info(f"🔑 Security PIN: {self.pin}")
+        logger.info(f"📱 Open http://<YOUR_PC_IP>:{self.port} on your phone!")
         logger.info("=" * 60)
 
         await asyncio.Event().wait()

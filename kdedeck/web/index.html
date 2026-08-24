@@ -3,13 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#1e293b">
+  <meta name="theme-color" content="#0b1120">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>KdeDeck Controller</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body class="theme-breeze-dark">
+
+  <!-- Toast Notification Banners -->
+  <div class="toast-container" id="toastContainer"></div>
 
   <!-- Header & Navigation -->
   <header>
@@ -25,6 +28,8 @@
     </div>
 
     <div style="display: flex; gap: 8px;">
+      <button class="action-btn" id="addBtnControl" onclick="addNewItemToBoard()" style="display: none;">+ Button</button>
+      <button class="action-btn" id="addBoardControl" onclick="addNewBoard()" style="display: none;">+ Board</button>
       <button class="action-btn" id="editToggleBtn" onclick="toggleEditMode()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
         <span id="editBtnText">Edit</span>
@@ -40,12 +45,35 @@
     <div class="boards-wrapper" id="boardsContainer"></div>
   </main>
 
+  <!-- Security PIN Auth Modal -->
+  <div class="modal-overlay" id="pinModal">
+    <div class="modal-card" style="text-align: center; max-width: 380px;">
+      <div class="modal-title">🔐 KdeDeck Security</div>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">Enter the Security PIN displayed on your PC to authorize this device.</p>
+      
+      <div class="form-group" style="margin-top: 10px;">
+        <input type="password" id="inputPin" class="form-input" placeholder="Enter PIN (e.g. 8484)" style="text-align: center; font-size: 1.4rem; letter-spacing: 4px;">
+      </div>
+
+      <div class="modal-actions" style="justify-content: center;">
+        <button class="action-btn" style="background: var(--accent); width: 100%; justify-content: center; padding: 12px;" onclick="submitPinAuth()">Connect Device</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Button / Board Editor Modal -->
   <div class="modal-overlay" id="editorModal">
     <div class="modal-card">
       <div class="modal-header">
-        <div class="modal-title" id="modalTitle">Edit Item</div>
+        <div class="modal-title" id="modalTitle">Edit Button Item</div>
         <button class="action-btn" onclick="closeModal()" style="padding: 4px 8px;">✕</button>
+      </div>
+
+      <div class="form-group">
+        <label>Pick Installed Application</label>
+        <select id="systemAppPicker" class="form-select" onchange="onSystemAppPick()">
+          <option value="">-- Choose Installed Application --</option>
+        </select>
       </div>
 
       <div class="form-group">
@@ -60,35 +88,35 @@
           <option value="open_url">Open Website URL</option>
           <option value="audio_volume">Audio Volume Slider</option>
           <option value="brightness">Brightness Slider</option>
-          <option value="audio_mute_toggle">Toggle Mute</option>
+          <option value="audio_mute_toggle">Toggle Mute Audio</option>
           <option value="mpris_action">Media Control (Play/Pause/Next)</option>
           <option value="kdeconnect_ring">KDE Connect Find Phone</option>
-          <option value="kde_action">KDE Plasma Action</option>
+          <option value="kde_action">KDE Plasma System Action</option>
         </select>
       </div>
 
       <div class="form-group" id="payloadGroup">
-        <label id="payloadLabel">Payload (App Name or URL)</label>
+        <label id="payloadLabel">Payload (App Command / URL / Action)</label>
         <input type="text" id="editPayload" class="form-input" placeholder="e.g. firefox or https://youtube.com">
+      </div>
+
+      <div class="form-group" id="kdeActionPresetGroup" style="display: none;">
+        <label>Select KDE System Preset</label>
+        <select id="kdeActionPreset" class="form-select" onchange="document.getElementById('editPayload').value = this.value">
+          <option value="toggle_nightlight">Toggle Night Light</option>
+          <option value="lock_screen">Lock Screen</option>
+          <option value="mute_mic">Mute Microphone</option>
+          <option value="screenshot">Take Screenshot</option>
+          <option value="show_desktop">Show Desktop</option>
+          <option value="overview">Overview Grid</option>
+          <option value="present_windows">Present Windows (Expose)</option>
+          <option value="sleep_suspend">Sleep / Suspend System</option>
+        </select>
       </div>
 
       <div class="form-group">
         <label>Icon</label>
-        <select id="editIcon" class="form-select">
-          <option value="terminal">Terminal</option>
-          <option value="folder">Folder</option>
-          <option value="globe">Globe (Web)</option>
-          <option value="music">Music</option>
-          <option value="play">Play</option>
-          <option value="volume-2">Volume</option>
-          <option value="sun">Sun (Brightness)</option>
-          <option value="moon">Moon (Night Light)</option>
-          <option value="lock">Lock</option>
-          <option value="settings">Settings</option>
-          <option value="smartphone">Smartphone</option>
-          <option value="bell">Bell</option>
-          <option value="window">Window</option>
-        </select>
+        <input type="text" id="editIcon" class="form-input" placeholder="e.g. firefox, terminal, sun, volume-2">
       </div>
 
       <div class="form-group">
@@ -107,9 +135,12 @@
         </select>
       </div>
 
-      <div class="modal-actions">
-        <button class="action-btn" onclick="closeModal()">Cancel</button>
-        <button class="action-btn" style="background: var(--accent);" onclick="saveItemChanges()">Save Item</button>
+      <div class="modal-actions" style="justify-content: space-between;">
+        <button class="action-btn" style="background: rgba(239, 68, 68, 0.2); border-color: #ef4444; color: #ef4444;" onclick="deleteCurrentItem()">Delete Item</button>
+        <div>
+          <button class="action-btn" onclick="closeModal()">Cancel</button>
+          <button class="action-btn" style="background: var(--accent);" onclick="saveItemChanges()">Save Item</button>
+        </div>
       </div>
     </div>
   </div>
