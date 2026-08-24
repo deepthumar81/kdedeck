@@ -18,14 +18,25 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW reg error:', err));
 }
 
-// iOS 18 / One UI 9 Theme Modes
-const THEMES = ['theme-breeze-dark', 'theme-light', 'theme-ios-colorful'];
+// Theme Modes
+const THEMES = ['theme-neon-cyberdeck', 'theme-oled', 'theme-light'];
 let currentThemeIdx = 0;
 
 function cycleTheme() {
   document.body.classList.remove(THEMES[currentThemeIdx]);
   currentThemeIdx = (currentThemeIdx + 1) % THEMES.length;
   document.body.classList.add(THEMES[currentThemeIdx]);
+}
+
+// Drawer Toggle
+function toggleDrawer() {
+  const drawer = document.getElementById('drawerOverlay');
+  if (drawer) drawer.classList.toggle('active');
+}
+
+function closeDrawer(e) {
+  const drawer = document.getElementById('drawerOverlay');
+  if (drawer) drawer.classList.remove('active');
 }
 
 // Toast Notifications
@@ -52,6 +63,7 @@ function initWebSocket() {
 
   ws.onopen = () => {
     console.log('Connected to KdeDeck Server');
+    updateStatusBadge(true);
     const savedToken = localStorage.getItem('kdedeck_token');
     if (savedToken) {
       ws.send(JSON.stringify({ type: 'authenticate', token: savedToken }));
@@ -69,8 +81,27 @@ function initWebSocket() {
 
   ws.onclose = () => {
     console.warn('WebSocket closed. Reconnecting in 2 seconds...');
+    updateStatusBadge(false);
     setTimeout(initWebSocket, 2000);
   };
+}
+
+function updateStatusBadge(connected) {
+  const badge = document.getElementById('statusBadge');
+  const text = document.getElementById('statusText');
+  if (badge && text) {
+    if (connected) {
+      badge.style.background = 'rgba(34, 197, 94, 0.15)';
+      badge.style.borderColor = 'rgba(34, 197, 94, 0.5)';
+      badge.style.color = '#4ade80';
+      text.innerText = 'DECK CONTROL: Synced';
+    } else {
+      badge.style.background = 'rgba(239, 68, 68, 0.15)';
+      badge.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+      badge.style.color = '#f87171';
+      text.innerText = 'DECK CONTROL: Disconnected';
+    }
+  }
 }
 
 function triggerHaptic() {
@@ -163,6 +194,7 @@ function renderAllBoards() {
 
     page.appendChild(titleBar);
 
+    // Fixed Matrix Grid (4 cols x 3 rows = 12 slots by default)
     const grid = document.createElement('div');
     grid.className = 'deck-grid';
 
@@ -170,10 +202,30 @@ function renderAllBoards() {
       grid.id = 'taskbarGrid';
       renderTaskbarItems(grid);
     } else {
+      const cols = board.columns || currentConfig.grid_columns || 4;
+      const rows = board.rows || currentConfig.grid_rows || 3;
+      const totalSlots = cols * rows;
+
+      let filledSlots = 0;
       board.items.forEach((item, itemIdx) => {
         const el = createDeckItemElement(item, bIdx, itemIdx);
         grid.appendChild(el);
+        filledSlots += item.type === 'slider' ? 2 : 1;
       });
+
+      // Render Empty Matrix Slot Placeholders to maintain fixed grid layout (Reference Image 1)
+      while (filledSlots < totalSlots) {
+        const emptySlot = document.createElement('div');
+        emptySlot.className = 'empty-slot';
+        emptySlot.innerHTML = '+';
+        emptySlot.onclick = () => {
+          if (isEditMode) {
+            addNewItemToBoard();
+          }
+        };
+        grid.appendChild(emptySlot);
+        filledSlots++;
+      }
     }
 
     page.appendChild(grid);
@@ -187,7 +239,7 @@ function createDeckItemElement(item, bIdx, itemIdx) {
   const div = document.createElement('div');
 
   if (item.type === 'slider') {
-    div.className = `deck-item slider-item ${item.color || 'gradient-blue'}`;
+    div.className = `deck-item slider-item ${item.color || 'neon-blue'}`;
     const currentVal = item.action === 'audio_volume' ? currentState.volume : currentState.brightness;
 
     div.innerHTML = `
@@ -202,7 +254,7 @@ function createDeckItemElement(item, bIdx, itemIdx) {
       </div>
     `;
   } else {
-    div.className = `deck-item ${item.color || 'gradient-blue'}`;
+    div.className = `deck-item ${item.color || 'neon-blue'}`;
     div.innerHTML = `
       <div class="item-icon">${renderIconHTML(item.icon)}</div>
       <div class="item-label">${item.title}</div>
@@ -244,7 +296,7 @@ function renderTaskbarItems(grid) {
 
   currentState.open_windows.forEach(win => {
     const div = document.createElement('div');
-    div.className = 'deck-item gradient-indigo';
+    div.className = 'deck-item neon-purple';
     div.innerHTML = `
       <div class="item-icon">${renderIconHTML(win.icon)}</div>
       <div class="item-label">${win.title}</div>
@@ -432,11 +484,7 @@ function saveBoardTitle() {
 // Edit Mode & System Apps Fetching
 function toggleEditMode() {
   isEditMode = !isEditMode;
-  document.getElementById('editBtnText').innerText = isEditMode ? 'Done' : 'Edit';
-  document.getElementById('editToggleBtn').classList.toggle('active', isEditMode);
-
-  document.getElementById('addBtnControl').style.display = isEditMode ? 'block' : 'none';
-  document.getElementById('addBoardControl').style.display = isEditMode ? 'block' : 'none';
+  document.getElementById('drawerEditBtnText').innerText = isEditMode ? 'Done Editing' : 'Edit Mode';
 
   if (isEditMode && installedAppsCache.length === 0) {
     fetchInstalledApps();
@@ -493,7 +541,7 @@ function addNewItemToBoard() {
     action: 'launch_app',
     payload: 'konsole',
     icon: 'terminal',
-    color: 'gradient-blue'
+    color: 'neon-cyan'
   };
 
   currentConfig.boards[activeBoardIndex].items.push(newItem);
@@ -507,6 +555,8 @@ function addNewBoard() {
     id: `board_${Date.now()}`,
     title: `Board ${currentConfig.boards.length + 1}`,
     icon: 'layers',
+    columns: 4,
+    rows: 3,
     items: []
   };
 
@@ -536,7 +586,7 @@ function openEditModal(bIdx, itemIdx) {
   document.getElementById('editActionType').value = item.action || 'launch_app';
   document.getElementById('editPayload').value = item.payload || '';
   document.getElementById('editIcon').value = item.icon || 'terminal';
-  document.getElementById('editColor').value = item.color || 'gradient-blue';
+  document.getElementById('editColor').value = item.color || 'neon-cyan';
 
   onActionTypeChange();
   document.getElementById('editorModal').classList.add('active');

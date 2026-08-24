@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kdedeck-v4';
+const CACHE_NAME = 'kdedeck-v5';
 const ASSETS = [
   '/',
   '/index.html',

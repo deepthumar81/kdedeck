@@ -8,10 +8,9 @@ CONFIG_DIR = os.path.expanduser("~/.config/kdedeck")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 DEFAULT_CONFIG = {
-    "version": "1.0",
+    "version": "1.1",
     "port": 8484,
-    "theme": "breeze-dark",
-    "active_board_index": 0,
+    "theme": "theme-neon-cyberdeck",
     "grid_columns": 4,
     "grid_rows": 3,
     "boards": [
@@ -19,6 +18,8 @@ DEFAULT_CONFIG = {
             "id": "board_system",
             "title": "System & Audio",
             "icon": "settings",
+            "columns": 4,
+            "rows": 3,
             "items": [
                 {
                     "type": "slider",
@@ -26,7 +27,7 @@ DEFAULT_CONFIG = {
                     "title": "Volume",
                     "action": "audio_volume",
                     "icon": "volume-2",
-                    "color": "gradient-blue"
+                    "color": "neon-amber"
                 },
                 {
                     "type": "slider",
@@ -34,7 +35,7 @@ DEFAULT_CONFIG = {
                     "title": "Brightness",
                     "action": "brightness",
                     "icon": "sun",
-                    "color": "gradient-amber"
+                    "color": "neon-yellow"
                 },
                 {
                     "type": "button",
@@ -42,7 +43,7 @@ DEFAULT_CONFIG = {
                     "title": "Mute Audio",
                     "action": "audio_mute_toggle",
                     "icon": "volume-x",
-                    "color": "gradient-red"
+                    "color": "neon-red"
                 },
                 {
                     "type": "button",
@@ -51,7 +52,7 @@ DEFAULT_CONFIG = {
                     "action": "launch_app",
                     "payload": "konsole",
                     "icon": "terminal",
-                    "color": "gradient-purple"
+                    "color": "neon-purple"
                 },
                 {
                     "type": "button",
@@ -60,7 +61,7 @@ DEFAULT_CONFIG = {
                     "action": "launch_app",
                     "payload": "dolphin",
                     "icon": "folder",
-                    "color": "gradient-indigo"
+                    "color": "neon-cyan"
                 },
                 {
                     "type": "button",
@@ -69,7 +70,7 @@ DEFAULT_CONFIG = {
                     "action": "kde_action",
                     "payload": "lock_screen",
                     "icon": "lock",
-                    "color": "gradient-slate"
+                    "color": "neon-slate"
                 },
                 {
                     "type": "button",
@@ -78,7 +79,7 @@ DEFAULT_CONFIG = {
                     "action": "kde_action",
                     "payload": "toggle_nightlight",
                     "icon": "moon",
-                    "color": "gradient-orange"
+                    "color": "neon-orange"
                 },
                 {
                     "type": "button",
@@ -87,7 +88,7 @@ DEFAULT_CONFIG = {
                     "action": "launch_app",
                     "payload": "systemsettings",
                     "icon": "sliders",
-                    "color": "gradient-teal"
+                    "color": "neon-green"
                 }
             ]
         },
@@ -95,6 +96,8 @@ DEFAULT_CONFIG = {
             "id": "board_media",
             "title": "Media & Browser",
             "icon": "music",
+            "columns": 4,
+            "rows": 3,
             "items": [
                 {
                     "type": "button",
@@ -103,7 +106,7 @@ DEFAULT_CONFIG = {
                     "action": "mpris_action",
                     "payload": "Previous",
                     "icon": "skip-back",
-                    "color": "gradient-emerald"
+                    "color": "neon-green"
                 },
                 {
                     "type": "button",
@@ -112,7 +115,7 @@ DEFAULT_CONFIG = {
                     "action": "mpris_action",
                     "payload": "PlayPause",
                     "icon": "play",
-                    "color": "gradient-emerald"
+                    "color": "neon-green"
                 },
                 {
                     "type": "button",
@@ -121,7 +124,7 @@ DEFAULT_CONFIG = {
                     "action": "mpris_action",
                     "payload": "Next",
                     "icon": "skip-forward",
-                    "color": "gradient-emerald"
+                    "color": "neon-green"
                 },
                 {
                     "type": "button",
@@ -129,8 +132,8 @@ DEFAULT_CONFIG = {
                     "title": "Firefox",
                     "action": "launch_app",
                     "payload": "firefox",
-                    "icon": "globe",
-                    "color": "gradient-orange"
+                    "icon": "firefox",
+                    "color": "neon-orange"
                 },
                 {
                     "type": "button",
@@ -139,7 +142,7 @@ DEFAULT_CONFIG = {
                     "action": "open_url",
                     "payload": "https://youtube.com",
                     "icon": "video",
-                    "color": "gradient-red"
+                    "color": "neon-red"
                 },
                 {
                     "type": "button",
@@ -148,7 +151,7 @@ DEFAULT_CONFIG = {
                     "action": "launch_app",
                     "payload": "spotify",
                     "icon": "music",
-                    "color": "gradient-green"
+                    "color": "neon-green"
                 }
             ]
         },
@@ -156,6 +159,8 @@ DEFAULT_CONFIG = {
             "id": "board_kdeconnect",
             "title": "KDE Connect",
             "icon": "smartphone",
+            "columns": 4,
+            "rows": 3,
             "items": [
                 {
                     "type": "button",
@@ -163,7 +168,7 @@ DEFAULT_CONFIG = {
                     "title": "Find Phone",
                     "action": "kdeconnect_ring",
                     "icon": "bell",
-                    "color": "gradient-pink"
+                    "color": "neon-pink"
                 },
                 {
                     "type": "widget",
@@ -171,7 +176,7 @@ DEFAULT_CONFIG = {
                     "title": "Phone Battery",
                     "action": "kdeconnect_battery",
                     "icon": "battery-charging",
-                    "color": "gradient-teal"
+                    "color": "neon-cyan"
                 },
                 {
                     "type": "button",
@@ -179,7 +184,7 @@ DEFAULT_CONFIG = {
                     "title": "Clip Sync",
                     "action": "kdeconnect_clipboard",
                     "icon": "clipboard",
-                    "color": "gradient-blue"
+                    "color": "neon-blue"
                 }
             ]
         },
@@ -187,6 +192,8 @@ DEFAULT_CONFIG = {
             "id": "board_taskbar",
             "title": "Active Taskbar",
             "icon": "layers",
+            "columns": 4,
+            "rows": 3,
             "dynamic": "kwin_active_apps",
             "items": []
         }
