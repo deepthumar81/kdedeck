@@ -1,0 +1,449 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'dynamic_matrix_grid.dart';
+import 'package:provider/provider.dart';
+import '../services/websocket_service.dart';
+
+class NeumorphicDeckScreen extends StatefulWidget {
+  const NeumorphicDeckScreen({super.key});
+
+  @override
+  State<NeumorphicDeckScreen> createState() => _NeumorphicDeckScreenState();
+}
+
+class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
+  final PageController _pageController = PageController();
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  int _activePageIndex = 0;
+
+  bool _isDarkMode = true;
+
+  Color get bgColor => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFE2E8F0);
+  Color get lightShadow => _isDarkMode ? const Color(0xFF1E293B) : const Color(0xFFFFFFFF);
+  Color get darkShadow => _isDarkMode ? const Color(0xFF050914) : const Color(0xFFCBD5E1);
+  Color get accentBlue => _isDarkMode ? const Color(0xFF38BDF8) : const Color(0xFF0284C7);
+  Color get textPrimary => _isDarkMode ? Colors.white70 : const Color(0xFF0F172A);
+
+  @override
+  Widget build(BuildContext context) {
+    final ws = Provider.of<WebSocketService>(context);
+    final config = ws.configData;
+    final boards = config?['boards'] as List<dynamic>? ?? [];
+
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: bgColor,
+      drawer: _buildNeumorphicDrawer(context, ws),
+      body: SafeArea(
+        child: boards.isEmpty
+            ? _buildConnectingState(ws)
+            : PageView.builder(
+                controller: _pageController,
+                physics: const BouncingScrollPhysics(),
+                onPageChanged: (idx) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _activePageIndex = idx);
+                },
+                itemCount: boards.length,
+                itemBuilder: (context, bIdx) {
+                  final board = boards[bIdx];
+                  return _buildBoardContent(ws, board, boards.length);
+                },
+              ),
+      ),
+    );
+  }
+
+  Widget _buildBoardContent(WebSocketService ws, Map<String, dynamic> board, int totalBoards) {
+    final showMetrics = ws.showMetrics && (ws.configData?['show_metrics'] != false);
+    final items = board['items'] as List<dynamic>? ?? [];
+    final cols = (board['grid_columns'] as num? ?? 4).toInt();
+    final rows = (board['grid_rows'] as num? ?? 3).toInt();
+
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Row(
+        children: [
+          // Sleek Ultra-Compact Left Sidebar (Width 54px: ☰ Hamburger Button + Micro Gauges + LED)
+          _buildCompactLeftSidebar(ws, showMetrics, totalBoards),
+          const SizedBox(width: 8),
+
+          // Right Multi-Span Zero-Scroll Matrix Grid (Key forced for instant PC grid size updates!)
+          Expanded(
+            child: Center(
+              key: ValueKey("grid_${cols}_${rows}_${board['id']}_${items.length}"),
+              child: DynamicMatrixGrid(
+                cols: cols,
+                rows: rows,
+                spacing: 8,
+                itemCount: items.length,
+                getSpanCols: (idx) => (items[idx]['span_cols'] as num? ?? 1).toInt(),
+                getSpanRows: (idx) => (items[idx]['span_rows'] as num? ?? 1).toInt(),
+                itemBuilder: (context, idx, spanCols, spanRows) {
+                  return _buildNeumorphicTile(ws, items[idx], spanCols, spanRows);
+                },
+                emptyBuilder: (context) => _buildEmptyNeumorphicSlot(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Ultra-Compact Left Sidebar (Width 54px - Fits ☰ Hamburger Menu Icon perfectly without wasting space)
+  Widget _buildCompactLeftSidebar(WebSocketService ws, bool showMetrics, int totalBoards) {
+    return Container(
+      width: 54,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(3, 3), blurRadius: 6),
+          BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-3, -3), blurRadius: 6),
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Sleek Compact Hamburger Menu Icon ☰ (36x36px)
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.lightImpact();
+              _scaffoldKey.currentState?.openDrawer();
+            },
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: bgColor,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(color: darkShadow.withOpacity(0.8), offset: const Offset(2, 2), blurRadius: 4),
+                  BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-2, -2), blurRadius: 4),
+                ],
+              ),
+              child: Icon(Icons.menu_rounded, color: accentBlue, size: 20),
+            ),
+          ),
+
+          // Micro Hardware Metrics Gauges (CPU, GPU, RAM)
+          if (showMetrics) ...[
+            _buildMicroGauge("C", "${ws.metrics['cpu_temp']}°", const Color(0xFF22C55E)),
+            _buildMicroGauge("G", "${ws.metrics['gpu_temp']}°", const Color(0xFFF59E0B)),
+            _buildMicroGauge("R", "${ws.metrics['ram_percent']}%", const Color(0xFF3B82F6)),
+          ],
+
+          // Live Connection LED Status Dot & Page Dots
+          Column(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: ws.isConnected ? const Color(0xFF22C55E) : const Color(0xFFEF4444),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(
+                  totalBoards,
+                  (idx) => Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                    width: idx == _activePageIndex ? 10 : 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: idx == _activePageIndex ? accentBlue : textPrimary.withOpacity(0.24),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMicroGauge(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(label, style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: textPrimary.withOpacity(0.5))),
+        Text(value, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: color)),
+      ],
+    );
+  }
+
+  Widget _buildNeumorphicSliderTile(WebSocketService ws, Map<String, dynamic> item, int spanCols, int spanRows, bool isVolume) {
+    final color = isVolume ? accentBlue : const Color(0xFFF59E0B);
+    final icon = isVolume ? Icons.volume_up_rounded : Icons.wb_sunny_rounded;
+    final valStr = isVolume ? "${ws.currentVolume}%" : "${ws.currentBrightness}%";
+    final double sliderVal = isVolume ? ws.currentVolume.toDouble().clamp(0.0, 100.0) : ws.currentBrightness.toDouble().clamp(5.0, 100.0);
+    final minVal = isVolume ? 0.0 : 5.0;
+
+    return RepaintBoundary(
+      child: Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(4, 4), blurRadius: 8),
+          BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
+        ],
+      ),
+      child: Column(
+        children: [
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.mediumImpact();
+              if (isVolume) ws.triggerAction("audio_mute_toggle");
+            },
+            child: Container(
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                color: bgColor,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(color: darkShadow.withOpacity(0.8), offset: const Offset(2, 2), blurRadius: 4),
+                  BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-2, -2), blurRadius: 4),
+                ],
+              ),
+              child: Icon(icon, color: color, size: 16),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(valStr, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: color)),
+          const SizedBox(height: 4),
+          Expanded(
+            child: RotatedBox(
+              quarterTurns: 3,
+              child: SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 9,
+                  thumbShape: SliderComponentShape.noThumb,
+                  activeTrackColor: color,
+                  inactiveTrackColor: Colors.black38,
+                  overlayShape: SliderComponentShape.noOverlay,
+                ),
+                child: Slider(
+                  value: sliderVal,
+                  min: minVal,
+                  max: 100,
+                  onChanged: (val) {
+                    HapticFeedback.selectionClick();
+                    if (isVolume) {
+                      ws.triggerAction("audio_volume", value: val.toInt());
+                    } else {
+                      ws.triggerAction("brightness", value: val.toInt());
+                    }
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+
+  // Neumorphic Multi-Span Tile (Supports 1x1 Normal, 2x1 Wide, 2x2 Big)
+  Widget _buildNeumorphicTile(WebSocketService ws, Map<String, dynamic> item, int spanCols, int spanRows) {
+    final type = item['type'] ?? 'button';
+    if (type == 'volume_slider') return _buildNeumorphicSliderTile(ws, item, spanCols, spanRows, true);
+    if (type == 'brightness_slider') return _buildNeumorphicSliderTile(ws, item, spanCols, spanRows, false);
+
+    final isMultiSpan = spanCols > 1 || spanRows > 1;
+
+    return RepaintBoundary(
+      child: Container(
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(3, 3), blurRadius: 6),
+          BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-3, -3), blurRadius: 6),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            HapticFeedback.mediumImpact();
+            ws.triggerAction(item['action'], payload: item['payload'], itemId: item['id']);
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(_getIconData(item['icon']), size: isMultiSpan ? 28 : 20, color: accentBlue),
+                const SizedBox(height: 3),
+                Text(
+                  item['title'] ?? 'Button',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: isMultiSpan ? 11 : 9,
+                    fontWeight: FontWeight.w800,
+                    color: textPrimary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyNeumorphicSlot() {
+    return RepaintBoundary(
+      child: Container(
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(2, 2), blurRadius: 4),
+          BoxShadow(color: lightShadow.withOpacity(0.3), offset: const Offset(-2, -2), blurRadius: 4),
+        ],
+      ),
+      child: Center(
+        child: Icon(Icons.add_rounded, color: textPrimary.withOpacity(0.12), size: 16),
+      ),
+      ),
+    );
+  }
+
+  Widget _buildConnectingState(WebSocketService ws) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(5, 5), blurRadius: 10),
+            BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-5, -5), blurRadius: 10),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: accentBlue, strokeWidth: 3),
+            const SizedBox(height: 14),
+            Text(
+              "Connecting to KdeDeck PC Server...",
+              style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Safe Neumorphic Drawer (Wrapped in SingleChildScrollView to prevent RenderFlex Overflow)
+  Widget _buildNeumorphicDrawer(BuildContext context, WebSocketService ws) {
+    return Drawer(
+      backgroundColor: bgColor,
+      child: SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // App Title Header
+              DrawerHeader(
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  border: Border(bottom: BorderSide(color: lightShadow, width: 1)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text("KDE DECK", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: textPrimary, letterSpacing: 2)),
+                    Text("PC Link: http://${ws.serverIp}:${ws.serverPort}", style: TextStyle(fontSize: 12, color: textPrimary.withOpacity(0.5))),
+                  ],
+                ),
+              ),
+              Divider(color: textPrimary.withOpacity(0.12), height: 32),
+
+              // Theme Toggle
+              SwitchListTile(
+                title: Text("Dark Theme", style: TextStyle(fontWeight: FontWeight.bold, color: textPrimary)),
+                subtitle: Text("Switch between Dark and Light mode", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
+                value: _isDarkMode,
+                activeColor: accentBlue,
+                onChanged: (val) {
+                  setState(() => _isDarkMode = val);
+                },
+              ),
+              Divider(color: textPrimary.withOpacity(0.12), height: 16),
+
+              // Hardware Metrics Toggle
+              SwitchListTile(
+                title: Text("Hardware Gauges (CPU/GPU/RAM)", style: TextStyle(fontWeight: FontWeight.bold, color: textPrimary)),
+                subtitle: Text("Hide gauge & stop PC background polling", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
+                value: ws.showMetrics,
+                activeColor: accentBlue,
+                onChanged: (val) {
+                  ws.toggleMetricsEnabled(val);
+                },
+              ),
+              Divider(color: textPrimary.withOpacity(0.12), height: 16),
+
+              // Battery Saver Toggle
+              SwitchListTile(
+                title: Text("Battery Saver Mode", style: TextStyle(fontWeight: FontWeight.bold, color: textPrimary)),
+                subtitle: Text("Extends battery life on low-end phones", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
+                value: ws.isBatterySaverMode,
+                activeColor: const Color(0xFF22C55E),
+                onChanged: (val) {
+                  ws.toggleBatterySaver(val);
+                },
+              ),
+              Divider(color: textPrimary.withOpacity(0.12), height: 24),
+
+              // IP & Connection Reset
+              ListTile(
+                leading: Icon(Icons.wifi_find_rounded, color: accentBlue),
+                title: Text("Reconnect PC IP", style: TextStyle(fontWeight: FontWeight.bold, color: textPrimary)),
+                subtitle: Text("${ws.serverIp}:${ws.serverPort}", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
+                onTap: () {
+                  ws.connect();
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _getIconData(String? iconName) {
+    switch (iconName) {
+      case 'terminal': return Icons.terminal_rounded;
+      case 'folder': return Icons.folder_open_rounded;
+      case 'firefox': return Icons.language_rounded;
+      case 'chrome': return Icons.web_rounded;
+      case 'code': return Icons.code_rounded;
+      case 'music': return Icons.music_note_rounded;
+      case 'lock': return Icons.lock_rounded;
+      case 'moon': return Icons.nightlight_round;
+      case 'sun': return Icons.wb_sunny_rounded;
+      case 'volume-2': return Icons.volume_up_rounded;
+      case 'settings': return Icons.settings_rounded;
+      case 'layers': return Icons.layers_rounded;
+      default: return Icons.widgets_rounded;
+    }
+  }
+}

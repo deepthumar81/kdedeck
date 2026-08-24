@@ -1,25 +1,35 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:provider/provider.dart';
 import 'services/websocket_service.dart';
-import 'ui/ios26_glass_deck.dart';
+import 'ui/neumorphic_deck.dart';
+import 'ui/desktop_configurator.dart';
+
+import 'package:window_manager/window_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Enable Permanent Screen WakeLock (Screen stays awake on desk)
-  await WakelockPlus.enable();
-
-  // Enable True Fullscreen Immersive Mode (Hide Android status & nav bars)
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-
-  // Lock orientation to Landscape & Portrait
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-    DeviceOrientation.portraitUp,
-  ]);
+  // Enable Screen WakeLock on Mobile devices
+  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    await WakelockPlus.enable();
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  } else if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+    await windowManager.ensureInitialized();
+    WindowOptions windowOptions = const WindowOptions(
+      size: Size(900, 600),
+      minimumSize: Size(900, 600),
+      center: true,
+      title: "KDE Deck Configurator",
+    );
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
 
   runApp(
     ChangeNotifierProvider(
@@ -34,18 +44,21 @@ class KdeDeckApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Detect target platform (PC Desktop Parent vs Mobile Phone Child)
+    final bool isDesktop = !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows);
+
     return MaterialApp(
       title: 'KDE DECK',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0B0F17),
-        cardColor: const Color(0x1AFFFFFF),
+        scaffoldBackgroundColor: const Color(0xFF0F172A),
+        cardColor: const Color(0xFF1E293B),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF22C55E),
+          primary: Color(0xFF38BDF8),
           surface: Color(0xFF0F172A),
         ),
       ),
-      home: const Ios26GlassDeckScreen(),
+      home: isDesktop ? const DesktopConfiguratorScreen() : const NeumorphicDeckScreen(),
     );
   }
 }

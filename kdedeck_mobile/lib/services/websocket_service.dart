@@ -43,13 +43,20 @@ class WebSocketService extends ChangeNotifier {
     connect();
   }
 
-  void connect() {
-    _channel?.sink.close();
-    final wsUrl = Uri.parse("ws://$serverIp:$serverPort/ws");
+  bool _isConnecting = false;
+
+  void connect() async {
+    if (_isConnecting) return;
+    _isConnecting = true;
 
     try {
+      await _channel?.sink.close();
+      final wsUrl = Uri.parse("ws://$serverIp:$serverPort/ws");
       _channel = WebSocketChannel.connect(wsUrl);
+
+      await _channel!.ready;
       isConnected = true;
+      _isConnecting = false;
       notifyListeners();
 
       _channel!.stream.listen(
@@ -62,21 +69,28 @@ class WebSocketService extends ChangeNotifier {
         onDone: () {
           _handleDisconnect();
         },
+        cancelOnError: false,
       );
     } catch (e) {
+      _isConnecting = false;
       _handleDisconnect();
     }
   }
 
   void _handleDisconnect() {
-    isConnected = false;
-    notifyListeners();
+    _isConnecting = false;
+    if (isConnected) {
+      isConnected = false;
+      notifyListeners();
+    }
 
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 2), () {
-      if (!isConnected) connect();
+    _reconnectTimer = Timer(const Duration(seconds: 4), () {
+      connect();
     });
   }
+
+
 
   void _handleMessage(dynamic message) {
     try {
@@ -86,6 +100,8 @@ class WebSocketService extends ChangeNotifier {
       if (type == 'init_state' || type == 'config_updated') {
         configData = data['config'];
         pinRequired = data['pin_required'] ?? false;
+        isConnected = true;
+
 
         if (data['state'] != null) {
           final state = data['state'];
@@ -127,7 +143,39 @@ class WebSocketService extends ChangeNotifier {
     }
   }
 
+  void sendSaveConfig(Map<String, dynamic> newConfig) {
+    configData = newConfig;
+    notifyListeners();
+
+    if (_channel != null && isConnected) {
+      final msg = jsonEncode({
+        "type": "save_config",
+        "config": newConfig,
+      });
+      _channel!.sink.add(msg);
+    }
+  }
+
+  bool showMetrics = true;
+
+  void toggleMetricsEnabled(bool val) async {
+    showMetrics = val;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_metrics', val);
+
+    if (_channel != null && isConnected) {
+      final msg = jsonEncode({
+        "type": "set_metrics_enabled",
+        "enabled": val,
+      });
+      _channel!.sink.add(msg);
+    }
+  }
+
   void toggleBatterySaver(bool val) async {
+
+
     isBatterySaverMode = val;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
