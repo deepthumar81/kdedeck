@@ -134,9 +134,16 @@ X-KDE-autostart-after=panel
 
     print("✅ KdeDeck autostart enabled successfully for KDE Plasma boot!")
 
+def launch_gui():
+    gui_main = os.path.join(PROJECT_DIR, "kdedeck", "pc_gui", "configurator.py")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = PROJECT_DIR
+    subprocess.Popen([VENV_PYTHON, gui_main], cwd=PROJECT_DIR, env=env)
+    print("🎨 Opened KdeDeck PC Configurator GUI!")
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: kdedeck {start|stop|status|enable-autostart|install-cli}")
+        print("Usage: kdedeck {start|stop|status|gui|enable-autostart|install-cli}")
         sys.exit(1)
 
     cmd = sys.argv[1].lower()
@@ -146,6 +153,8 @@ def main():
         stop_server()
     elif cmd == "status":
         print_status()
+    elif cmd == "gui":
+        launch_gui()
     elif cmd == "enable-autostart":
         enable_autostart()
     elif cmd == "install-cli":
@@ -155,3 +164,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
