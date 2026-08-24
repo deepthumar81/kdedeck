@@ -18,6 +18,32 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW reg error:', err));
 }
 
+// Dynamic JS Viewport Auto-Scaling
+function recalculateGridTileSize() {
+  const container = document.getElementById('mainContainer');
+  if (!container || !currentConfig) return;
+
+  const cols = currentConfig.grid_columns || 4;
+  const rows = currentConfig.grid_rows || 3;
+  const showMetrics = currentConfig.show_metrics !== false;
+
+  const availWidth = container.clientWidth - (showMetrics ? 210 : 32);
+  const availHeight = container.clientHeight - 50;
+
+  const gap = 10;
+  const maxTileWidth = Math.floor((availWidth - (cols - 1) * gap) / cols);
+  const maxTileHeight = Math.floor((availHeight - (rows - 1) * gap) / rows);
+
+  const tileSize = Math.max(45, Math.min(maxTileWidth, maxTileHeight, 140));
+
+  document.documentElement.style.setProperty('--tile-size', `${tileSize}px`);
+  document.documentElement.style.setProperty('--grid-cols', cols);
+  document.documentElement.style.setProperty('--grid-rows', rows);
+}
+
+window.addEventListener('resize', recalculateGridTileSize);
+window.addEventListener('orientationchange', () => setTimeout(recalculateGridTileSize, 200));
+
 // Theme Modes
 const THEMES = ['theme-neon-cyberdeck', 'theme-oled', 'theme-light'];
 let currentThemeIdx = 0;
@@ -115,7 +141,7 @@ function handleServerMessage(data) {
     currentConfig = data.config;
     if (data.state) currentState = { ...currentState, ...data.state };
 
-    applyGridCssVariables();
+    recalculateGridTileSize();
     renderAllBoards();
 
     const pinDisplay = document.getElementById('displayPin');
@@ -146,14 +172,6 @@ function handleServerMessage(data) {
     currentState.open_windows = data.windows;
     renderTaskbarBoard();
   }
-}
-
-function applyGridCssVariables() {
-  if (!currentConfig) return;
-  const cols = currentConfig.grid_columns || 4;
-  const rows = currentConfig.grid_rows || 3;
-  document.documentElement.style.setProperty('--grid-cols', cols);
-  document.documentElement.style.setProperty('--grid-rows', rows);
 }
 
 function submitPinAuth() {
@@ -249,7 +267,7 @@ function renderAllBoards() {
       bodyLayout.appendChild(metricsPanel);
     }
 
-    // Configurable Matrix Grid (e.g. 4x3, 6x6, 6x7, 8x7)
+    // Configurable Fluid Matrix Grid
     const grid = document.createElement('div');
     grid.className = 'deck-grid';
 
@@ -289,6 +307,7 @@ function renderAllBoards() {
   });
 
   updateBoardTransform();
+  recalculateGridTileSize();
 }
 
 function updateMetricsUI(metrics) {
@@ -448,7 +467,7 @@ function saveAdvancedSettings() {
   currentConfig.show_metrics = showMetrics;
   currentConfig.pin = pin;
 
-  applyGridCssVariables();
+  recalculateGridTileSize();
   saveConfigToServer();
   closeSettingsModal();
   renderAllBoards();

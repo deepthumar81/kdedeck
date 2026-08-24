@@ -12,9 +12,10 @@
   --radius-card: 16px;
   --radius-btn: 12px;
 
-  /* Grid matrix variables */
+  /* Dynamic JS-Calculated Viewport Variables */
   --grid-cols: 4;
   --grid-rows: 3;
+  --tile-size: 90px;
 
   /* Neon Colors */
   --neon-green: #22c55e;
@@ -64,6 +65,7 @@ body {
   background-color: var(--bg-base);
   color: var(--text-main);
   height: 100vh;
+  height: 100dvh; /* Dynamic Viewport Height for mobile browsers */
   width: 100vw;
   display: flex;
   flex-direction: column;
@@ -111,7 +113,7 @@ body {
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* Header & Status Bar (Reference Image 1 Alignment) */
+/* Header Bar */
 header {
   display: flex;
   align-items: center;
@@ -121,7 +123,8 @@ header {
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border-card);
   z-index: 10;
-  height: 54px;
+  height: 52px;
+  flex-shrink: 0;
 }
 
 .brand-section {
@@ -151,7 +154,7 @@ header {
 
 .brand-title {
   font-weight: 800;
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
@@ -159,15 +162,15 @@ header {
 .board-navigation {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .carousel-btn {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid var(--border-card);
   color: var(--text-main);
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -209,9 +212,9 @@ header {
   background: rgba(34, 197, 94, 0.15);
   border: 1px solid rgba(34, 197, 94, 0.5);
   color: #4ade80;
-  padding: 4px 12px;
+  padding: 4px 10px;
   border-radius: 20px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.5px;
   display: flex;
@@ -298,7 +301,7 @@ header {
   border-color: var(--accent);
 }
 
-/* Main Board Container */
+/* Main Container */
 main {
   flex: 1;
   position: relative;
@@ -319,7 +322,7 @@ main {
 .board-page {
   min-width: 100%;
   height: 100%;
-  padding: 14px 18px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
 }
@@ -328,85 +331,93 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-muted);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   text-transform: uppercase;
   letter-spacing: 1px;
+  flex-shrink: 0;
 }
 
 .deck-body-layout {
   flex: 1;
   display: flex;
-  gap: 14px;
+  gap: 12px;
   height: 100%;
   overflow: hidden;
+  align-items: center;
+  justify-content: center;
 }
 
-/* Left System Metrics Panel (Reference Image 1) */
+/* Left System Metrics Panel */
 .metrics-side-panel {
-  width: 220px;
+  width: 180px;
+  height: 100%;
   background: rgba(17, 24, 39, 0.85);
   border: 1px solid var(--border-card);
   border-radius: var(--radius-card);
-  padding: 14px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  justify-content: space-around;
   backdrop-filter: blur(16px);
+  flex-shrink: 0;
 }
 
 .metric-gauge-card {
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 12px;
+  border-radius: 12px;
+  padding: 8px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
 .gauge-circle {
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: 3px solid rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 800;
-  position: relative;
 }
 
-.gauge-cpu { border-color: #22c55e; color: #4ade80; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
-.gauge-gpu { border-color: #f59e0b; color: #fbbf24; box-shadow: 0 0 10px rgba(245, 158, 11, 0.3); }
-.gauge-ram { border-color: #3b82f6; color: #60a5fa; box-shadow: 0 0 10px rgba(59, 130, 246, 0.3); }
+.gauge-cpu { border-color: #22c55e; color: #4ade80; box-shadow: 0 0 8px rgba(34, 197, 94, 0.3); }
+.gauge-gpu { border-color: #f59e0b; color: #fbbf24; box-shadow: 0 0 8px rgba(245, 158, 11, 0.3); }
+.gauge-ram { border-color: #3b82f6; color: #60a5fa; box-shadow: 0 0 8px rgba(59, 130, 246, 0.3); }
 
 .gauge-info {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 2px;
+  gap: 1px;
 }
 
-.gauge-title { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
-.gauge-val { font-size: 0.95rem; font-weight: 800; }
+.gauge-title { font-size: 0.68rem; font-weight: 700; color: var(--text-muted); }
+.gauge-val { font-size: 0.85rem; font-weight: 800; }
 
-/* Configurable Fixed Matrix Grid */
+/* Dynamic Viewport Fluid Grid */
 .deck-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(var(--grid-cols, 4), 1fr);
-  grid-template-rows: repeat(var(--grid-rows, 3), 1fr);
-  gap: 12px;
-  width: 100%;
+  grid-template-columns: repeat(var(--grid-cols, 4), var(--tile-size, 90px));
+  grid-auto-rows: var(--tile-size, 90px);
+  gap: 10px;
+  justify-content: center;
+  align-content: center;
   height: 100%;
+  width: 100%;
 }
 
-/* Fixed Square Buttons with Neon Outlines (Reference Image 1) */
+/* Perfect Fluid Square Tile */
 .deck-item {
+  width: var(--tile-size, 90px);
+  height: var(--tile-size, 90px);
   background: var(--bg-card);
   backdrop-filter: blur(16px);
   border: 2px solid var(--neon-color, var(--border-card));
@@ -415,13 +426,13 @@ main {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 10px;
-  gap: 6px;
+  padding: 6px;
+  gap: 4px;
   cursor: pointer;
   position: relative;
   overflow: hidden;
   transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s ease;
-  box-shadow: 0 0 12px var(--neon-glow, transparent);
+  box-shadow: 0 0 10px var(--neon-glow, transparent);
 }
 
 .deck-item:active {
@@ -430,6 +441,8 @@ main {
 
 /* Empty Placeholder Matrix Slot */
 .empty-slot {
+  width: var(--tile-size, 90px);
+  height: var(--tile-size, 90px);
   border: 2px dashed rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-card);
   background: rgba(0, 0, 0, 0.15);
@@ -447,12 +460,14 @@ main {
   cursor: pointer;
 }
 
-/* Sliders Span 2 Columns */
+/* Sliders Span 2 Columns of Tile Size */
 .slider-item {
   grid-column: span 2;
+  width: calc(var(--tile-size, 90px) * 2 + 10px) !important;
+  height: var(--tile-size, 90px) !important;
   flex-direction: row;
   justify-content: space-between;
-  padding: 10px 16px;
+  padding: 8px 12px;
 }
 
 .slider-container {
@@ -460,13 +475,13 @@ main {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-left: 12px;
+  margin-left: 8px;
 }
 
 .slider-header {
   display: flex;
   justify-content: space-between;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -475,8 +490,8 @@ main {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 8px;
-  border-radius: 4px;
+  height: 6px;
+  border-radius: 3px;
   background: rgba(150, 150, 150, 0.2);
   outline: none;
 }
@@ -484,16 +499,16 @@ main {
 .range-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--text-main);
-  box-shadow: 0 0 10px var(--accent-glow);
+  box-shadow: 0 0 8px var(--accent-glow);
   cursor: pointer;
   border: 2px solid var(--accent);
 }
 
-/* Neon Border Accent Variations */
+/* Neon Colors */
 .neon-green { --neon-color: var(--neon-green); --neon-glow: rgba(34, 197, 94, 0.35); }
 .neon-blue { --neon-color: var(--neon-blue); --neon-glow: rgba(59, 130, 246, 0.35); }
 .neon-cyan { --neon-color: var(--neon-cyan); --neon-glow: rgba(6, 182, 212, 0.35); }
@@ -506,8 +521,8 @@ main {
 .neon-slate { --neon-color: var(--neon-slate); --neon-glow: rgba(100, 116, 139, 0.35); }
 
 .item-icon {
-  width: 32px;
-  height: 32px;
+  width: calc(var(--tile-size, 90px) * 0.35);
+  height: calc(var(--tile-size, 90px) * 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -520,14 +535,14 @@ main {
 }
 
 .app-icon-img {
-  width: 32px;
-  height: 32px;
+  width: calc(var(--tile-size, 90px) * 0.35);
+  height: calc(var(--tile-size, 90px) * 0.35);
   object-fit: contain;
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.4));
 }
 
 .item-label {
-  font-size: 0.8rem;
+  font-size: calc(var(--tile-size, 90px) * 0.13);
   font-weight: 700;
   text-align: center;
   line-height: 1.15;
