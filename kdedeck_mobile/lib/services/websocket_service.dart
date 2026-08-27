@@ -27,6 +27,8 @@ class WebSocketService extends ChangeNotifier {
     "ram_percent": 50,
   };
 
+  String activeServerName = "Linux PC";
+  List<Map<String, dynamic>> savedServers = [];
   Timer? _reconnectTimer;
 
   WebSocketService() {
@@ -35,12 +37,87 @@ class WebSocketService extends ChangeNotifier {
 
   Future<void> _loadSettingsAndConnect() async {
     final prefs = await SharedPreferences.getInstance();
-    serverIp = prefs.getString('server_ip') ?? "192.168.29.128";
-    serverPort = prefs.getInt('server_port') ?? 8484;
-    pin = prefs.getString('server_pin') ?? "8484";
+    
+    // Load saved servers list
+    final savedJsonStr = prefs.getString('saved_servers_list');
+    if (savedJsonStr != null) {
+      try {
+        final List<dynamic> decoded = jsonDecode(savedJsonStr);
+        savedServers = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+      } catch (_) {}
+    }
+
+    if (savedServers.isEmpty) {
+      savedServers = [
+        {
+          "name": "Default PC",
+          "ip": "192.168.29.128",
+          "port": 8484,
+          "pin": "8484",
+        }
+      ];
+    }
+
+    // Default desktop fallback if on desktop
+    final bool isDesktop = !kIsWeb && (defaultTargetPlatform == TargetPlatform.linux || defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.windows);
+    
+    if (isDesktop) {
+      serverIp = "127.0.0.1";
+      serverPort = 8484;
+      activeServerName = "Local Desktop Engine";
+    } else {
+      serverIp = prefs.getString('server_ip') ?? savedServers.first['ip'];
+      serverPort = prefs.getInt('server_port') ?? savedServers.first['port'];
+      pin = prefs.getString('server_pin') ?? savedServers.first['pin'];
+      activeServerName = prefs.getString('server_name') ?? savedServers.first['name'];
+    }
+
     isBatterySaverMode = prefs.getBool('battery_saver') ?? false;
 
     connect();
+  }
+
+  Future<void> addServer(String name, String ip, int port, String pinCode) async {
+    final newServer = {
+      "name": name.isNotEmpty ? name : "PC ($ip)",
+      "ip": ip,
+      "port": port,
+      "pin": pinCode,
+    };
+
+    savedServers.removeWhere((s) => s['ip'] == ip && s['port'] == port);
+    savedServers.add(newServer);
+
+    await _saveServersToPrefs();
+    await selectServer(newServer);
+  }
+
+  Future<void> removeServer(int index) async {
+    if (index >= 0 && index < savedServers.length) {
+      savedServers.removeAt(index);
+      await _saveServersToPrefs();
+      notifyListeners();
+    }
+  }
+
+  Future<void> selectServer(Map<String, dynamic> server) async {
+    serverIp = server['ip'];
+    serverPort = server['port'] ?? 8484;
+    pin = server['pin'] ?? "8484";
+    activeServerName = server['name'] ?? "PC ($serverIp)";
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('server_ip', serverIp);
+    await prefs.setInt('server_port', serverPort);
+    await prefs.setString('server_pin', pin);
+    await prefs.setString('server_name', activeServerName);
+
+    connect();
+  }
+
+  Future<void> _saveServersToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('saved_servers_list', jsonEncode(savedServers));
   }
 
   bool _isConnecting = false;

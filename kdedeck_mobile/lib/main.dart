@@ -5,9 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:provider/provider.dart';
 import 'services/websocket_service.dart';
+import 'services/dart_server_service.dart';
 import 'ui/neumorphic_deck.dart';
 import 'ui/desktop_configurator.dart';
-
 import 'package:window_manager/window_manager.dart';
 
 void main() async {
@@ -19,6 +19,10 @@ void main() async {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   } else if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
     await windowManager.ensureInitialized();
+    
+    // Launch embedded native Dart WebSocket Server on Desktop!
+    await DartServerService().startServer();
+
     WindowOptions windowOptions = const WindowOptions(
       size: Size(900, 600),
       minimumSize: Size(900, 600),

@@ -342,28 +342,193 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
 
   Widget _buildConnectingState(WebSocketService ws) {
     return Center(
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(5, 5), blurRadius: 10),
-            BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-5, -5), blurRadius: 10),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(color: accentBlue, strokeWidth: 3),
-            const SizedBox(height: 14),
-            Text(
-              "Connecting to KdeDeck PC Server...",
-              style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-          ],
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 420),
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(6, 6), blurRadius: 12),
+              BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-6, -6), blurRadius: 12),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.desktop_windows_rounded, size: 48, color: accentBlue),
+              const SizedBox(height: 12),
+              Text(
+                "Connect to Linux PC",
+                style: TextStyle(color: textPrimary, fontWeight: FontWeight.w900, fontSize: 18),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                "Connecting to ${ws.activeServerName} (${ws.serverIp})...",
+                style: TextStyle(color: textPrimary.withOpacity(0.6), fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(color: accentBlue, strokeWidth: 3),
+              const SizedBox(height: 20),
+
+              // Saved PCs Header & List
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("Saved PCs", style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold, fontSize: 14)),
+                  IconButton(
+                    icon: Icon(Icons.add_circle_rounded, color: accentBlue, size: 22),
+                    onPressed: () => _openAddServerDialog(context, ws),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              ...ws.savedServers.asMap().entries.map((entry) {
+                final idx = entry.key;
+                final server = entry.value;
+                final isSelected = server['ip'] == ws.serverIp;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected ? accentBlue.withOpacity(0.15) : bgColor,
+                    borderRadius: BorderRadius.circular(14),
+                    border: isSelected ? Border.all(color: accentBlue, width: 1.5) : null,
+                    boxShadow: [
+                      BoxShadow(color: darkShadow.withOpacity(0.5), offset: const Offset(2, 2), blurRadius: 4),
+                      BoxShadow(color: lightShadow.withOpacity(0.4), offset: const Offset(-2, -2), blurRadius: 4),
+                    ],
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                    leading: Icon(
+                      Icons.computer_rounded,
+                      color: isSelected ? accentBlue : textPrimary.withOpacity(0.6),
+                    ),
+                    title: Text(
+                      server['name'] ?? 'PC',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: isSelected ? accentBlue : textPrimary,
+                      ),
+                    ),
+                    subtitle: Text(
+                      "${server['ip']}:${server['port']}",
+                      style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5)),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isSelected)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(color: accentBlue, borderRadius: BorderRadius.circular(10)),
+                            child: const Text("Active", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                        IconButton(
+                          icon: Icon(Icons.delete_outline_rounded, size: 18, color: textPrimary.withOpacity(0.4)),
+                          onPressed: () => ws.removeServer(idx),
+                        ),
+                      ],
+                    ),
+                    onTap: () => ws.selectServer(server),
+                  ),
+                );
+              }),
+
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: accentBlue,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 44),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text("Add New PC IP", style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: () => _openAddServerDialog(context, ws),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  void _openAddServerDialog(BuildContext context, WebSocketService ws) {
+    final nameCtrl = TextEditingController();
+    final ipCtrl = TextEditingController(text: "192.168.29.128");
+    final portCtrl = TextEditingController(text: "8484");
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: bgColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text("Add PC Connection", style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                style: TextStyle(color: textPrimary),
+                decoration: InputDecoration(
+                  labelText: "PC Nickname (e.g. Work Laptop)",
+                  labelStyle: TextStyle(color: textPrimary.withOpacity(0.6)),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ipCtrl,
+                style: TextStyle(color: textPrimary),
+                decoration: InputDecoration(
+                  labelText: "IP Address (e.g. 192.168.1.50)",
+                  labelStyle: TextStyle(color: textPrimary.withOpacity(0.6)),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: portCtrl,
+                keyboardType: TextInputType.number,
+                style: TextStyle(color: textPrimary),
+                decoration: InputDecoration(
+                  labelText: "Port",
+                  labelStyle: TextStyle(color: textPrimary.withOpacity(0.6)),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text("Cancel", style: TextStyle(color: textPrimary.withOpacity(0.6))),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: accentBlue, foregroundColor: Colors.white),
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                final ip = ipCtrl.text.trim();
+                final port = int.tryParse(portCtrl.text.trim()) ?? 8484;
+
+                if (ip.isNotEmpty) {
+                  ws.addServer(name, ip, port, "8484");
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text("Save & Connect"),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -387,7 +552,8 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text("KDE DECK", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: textPrimary, letterSpacing: 2)),
-                    Text("PC Link: http://${ws.serverIp}:${ws.serverPort}", style: TextStyle(fontSize: 12, color: textPrimary.withOpacity(0.5))),
+                    Text("Connected to: ${ws.activeServerName}", style: TextStyle(fontSize: 12, color: accentBlue, fontWeight: FontWeight.bold)),
+                    Text("http://${ws.serverIp}:${ws.serverPort}", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
                   ],
                 ),
               ),
@@ -429,14 +595,14 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
               ),
               Divider(color: textPrimary.withOpacity(0.12), height: 24),
 
-              // IP & Connection Reset
+              // Switch / Manage PCs
               ListTile(
-                leading: Icon(Icons.wifi_find_rounded, color: accentBlue),
-                title: Text("Reconnect PC IP", style: TextStyle(fontWeight: FontWeight.bold, color: textPrimary)),
-                subtitle: Text("${ws.serverIp}:${ws.serverPort}", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
+                leading: Icon(Icons.devices_other_rounded, color: accentBlue),
+                title: Text("Saved PCs & Switch Connection", style: TextStyle(fontWeight: FontWeight.bold, color: textPrimary)),
+                subtitle: Text("Change active target PC or add a new one", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
                 onTap: () {
-                  ws.connect();
                   Navigator.pop(context);
+                  _openAddServerDialog(context, ws);
                 },
               ),
             ],
