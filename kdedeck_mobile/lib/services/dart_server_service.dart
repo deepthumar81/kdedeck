@@ -77,6 +77,10 @@ class DartServerService extends ChangeNotifier {
     _clients.add(socket);
     debugPrint("📱 Client connected! Total clients: ${_clients.length}");
 
+    if (configData == null) {
+      configData = _getDefaultConfig();
+    }
+
     // Send initial state upon connection
     _sendToSocket(socket, {
       "type": "init_state",
