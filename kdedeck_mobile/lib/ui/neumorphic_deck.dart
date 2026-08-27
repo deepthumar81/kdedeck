@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dynamic_matrix_grid.dart';
@@ -178,11 +179,19 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
     );
   }
 
+  Timer? _sliderDebounceTimer;
+
   Widget _buildNeumorphicSliderTile(WebSocketService ws, Map<String, dynamic> item, int spanCols, int spanRows, bool isVolume) {
-    final color = isVolume ? accentBlue : const Color(0xFFF59E0B);
-    final icon = isVolume ? Icons.volume_up_rounded : Icons.wb_sunny_rounded;
+    final color = isVolume
+        ? (ws.isMuted ? const Color(0xFFEF4444) : accentBlue)
+        : const Color(0xFFF59E0B);
+    final icon = isVolume
+        ? (ws.isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded)
+        : Icons.wb_sunny_rounded;
     final valStr = isVolume ? "${ws.currentVolume}%" : "${ws.currentBrightness}%";
-    final double sliderVal = isVolume ? ws.currentVolume.toDouble().clamp(0.0, 100.0) : ws.currentBrightness.toDouble().clamp(5.0, 100.0);
+    final double sliderVal = isVolume
+        ? ws.currentVolume.toDouble().clamp(0.0, 100.0)
+        : ws.currentBrightness.toDouble().clamp(5.0, 100.0);
     final minVal = isVolume ? 0.0 : 5.0;
 
     return Stack(
@@ -193,6 +202,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
             decoration: BoxDecoration(
               color: bgColor,
               borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: color.withOpacity(0.3), width: 1.5),
               boxShadow: [
                 BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(4, 4), blurRadius: 8),
                 BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
@@ -212,8 +222,9 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(5),
                   decoration: BoxDecoration(
-                    color: bgColor,
+                    color: ws.isMuted && isVolume ? const Color(0xFFEF4444).withOpacity(0.2) : bgColor,
                     shape: BoxShape.circle,
+                    border: Border.all(color: color.withOpacity(0.4), width: 1),
                     boxShadow: [
                       BoxShadow(color: darkShadow.withOpacity(0.8), offset: const Offset(2, 2), blurRadius: 4),
                       BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-2, -2), blurRadius: 4),
@@ -240,13 +251,19 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                       value: sliderVal,
                       min: minVal,
                       max: 100,
+                      divisions: 10,
                       onChanged: (val) {
                         HapticFeedback.selectionClick();
-                        if (isVolume) {
-                          ws.triggerAction("audio_volume", value: val.toInt());
-                        } else {
-                          ws.triggerAction("brightness", value: val.toInt());
-                        }
+                        final snappedVal = ((val / 10).round() * 10).toInt();
+
+                        _sliderDebounceTimer?.cancel();
+                        _sliderDebounceTimer = Timer(const Duration(milliseconds: 150), () {
+                          if (isVolume) {
+                            ws.triggerAction("audio_volume", value: snappedVal);
+                          } else {
+                            ws.triggerAction("brightness", value: snappedVal);
+                          }
+                        });
                       },
                     ),
                   ),
@@ -275,9 +292,10 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
             decoration: BoxDecoration(
               color: bgColor,
               borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: textPrimary.withOpacity(0.12), width: 1.2),
               boxShadow: [
-                BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(3, 3), blurRadius: 6),
-                BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-3, -3), blurRadius: 6),
+                BoxShadow(color: darkShadow.withOpacity(0.9), offset: const Offset(4, 4), blurRadius: 8),
+                BoxShadow(color: lightShadow.withOpacity(0.7), offset: const Offset(-4, -4), blurRadius: 8),
               ],
             ),
           ),
@@ -326,6 +344,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
             decoration: BoxDecoration(
               color: bgColor,
               borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: textPrimary.withOpacity(0.06), width: 1),
               boxShadow: [
                 BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(2, 2), blurRadius: 4),
                 BoxShadow(color: lightShadow.withOpacity(0.3), offset: const Offset(-2, -2), blurRadius: 4),
@@ -403,40 +422,44 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                       BoxShadow(color: lightShadow.withOpacity(0.4), offset: const Offset(-2, -2), blurRadius: 4),
                     ],
                   ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                    leading: Icon(
-                      Icons.computer_rounded,
-                      color: isSelected ? accentBlue : textPrimary.withOpacity(0.6),
-                    ),
-                    title: Text(
-                      server['name'] ?? 'PC',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                        color: isSelected ? accentBlue : textPrimary,
+                  child: Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                      leading: Icon(
+                        Icons.computer_rounded,
+                        color: isSelected ? accentBlue : textPrimary.withOpacity(0.6),
                       ),
-                    ),
-                    subtitle: Text(
-                      "${server['ip']}:${server['port']}",
-                      style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5)),
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isSelected)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(color: accentBlue, borderRadius: BorderRadius.circular(10)),
-                            child: const Text("Active", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                          ),
-                        IconButton(
-                          icon: Icon(Icons.delete_outline_rounded, size: 18, color: textPrimary.withOpacity(0.4)),
-                          onPressed: () => ws.removeServer(idx),
+                      title: Text(
+                        server['name'] ?? 'PC',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: isSelected ? accentBlue : textPrimary,
                         ),
-                      ],
+                      ),
+                      subtitle: Text(
+                        "${server['ip']}:${server['port']}",
+                        style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5)),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isSelected)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(color: accentBlue, borderRadius: BorderRadius.circular(10)),
+                              child: const Text("Active", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                            ),
+                          IconButton(
+                            icon: Icon(Icons.delete_outline_rounded, size: 18, color: textPrimary.withOpacity(0.4)),
+                            onPressed: () => ws.removeServer(idx),
+                          ),
+                        ],
+                      ),
+                      onTap: () => ws.selectServer(server),
                     ),
-                    onTap: () => ws.selectServer(server),
                   ),
                 );
               }),

@@ -17,7 +17,25 @@ class DartServerService extends ChangeNotifier {
   Map<String, dynamic>? configData;
   int currentVolume = 50;
   int currentBrightness = 70;
+  bool isMuted = false;
   Timer? _metricsTimer;
+  String? _cachedDisplayOutput;
+
+  Future<String> _getDisplayOutput() async {
+    if (_cachedDisplayOutput != null) return _cachedDisplayOutput!;
+    try {
+      final res = await Process.run('xrandr', ['--query']);
+      if (res.exitCode == 0) {
+        for (var line in (res.stdout as String).split('\n')) {
+          if (line.contains(' connected')) {
+            _cachedDisplayOutput = line.split(' ').first;
+            return _cachedDisplayOutput!;
+          }
+        }
+      }
+    } catch (_) {}
+    return 'eDP-1';
+  }
 
   Map<String, dynamic> metrics = {
     "cpu_temp": 45,
@@ -89,6 +107,7 @@ class DartServerService extends ChangeNotifier {
       "state": {
         "volume": currentVolume,
         "brightness": currentBrightness,
+        "is_muted": isMuted,
         "metrics": metrics,
       }
     });
@@ -150,7 +169,7 @@ class DartServerService extends ChangeNotifier {
 
   // --- Linux System Execution Engine ---
 
-  void _executeAction(String action, String payload, dynamic value) {
+  void _executeAction(String action, String payload, dynamic value) async {
     if (!Platform.isLinux) return;
 
     debugPrint("⚡ Executing Action: $action | payload: $payload | value: $value");
@@ -159,10 +178,14 @@ class DartServerService extends ChangeNotifier {
       case 'launch_app':
       case 'open_url':
         if (payload.isNotEmpty) {
-          if (payload.startsWith('http://') || payload.startsWith('https://')) {
-            Process.run('xdg-open', [payload]);
-          } else {
-            Process.run('sh', ['-c', payload]);
+          try {
+            if (payload.startsWith('http://') || payload.startsWith('https://')) {
+              await Process.run('xdg-open', [payload]);
+            } else {
+              await Process.run('sh', ['-c', payload]);
+            }
+          } catch (e) {
+            debugPrint("Launch app error: $e");
           }
         }
         break;
@@ -171,9 +194,19 @@ class DartServerService extends ChangeNotifier {
         if (value != null) {
           final vol = (value as num).toInt().clamp(0, 100);
           currentVolume = vol;
-          Process.run('pactl', ['set-sink-volume', '@DEFAULT_SINK@', '$vol%']).catchError((_) {
-            return Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', '$vol%']);
-          });
+
+          bool success = false;
+          try {
+            final res = await Process.run('pactl', ['set-sink-volume', '@DEFAULT_SINK@', '$vol%']);
+            if (res.exitCode == 0) success = true;
+          } catch (_) {}
+
+          if (!success) {
+            try {
+              await Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', '$vol%']);
+            } catch (_) {}
+          }
+
           _broadcast({
             "type": "state_update",
             "key": "volume",
@@ -184,18 +217,49 @@ class DartServerService extends ChangeNotifier {
         break;
 
       case 'audio_mute_toggle':
-        Process.run('pactl', ['set-sink-mute', '@DEFAULT_SINK@', 'toggle']).catchError((_) {
-          return Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', 'toggle']);
+        isMuted = !isMuted;
+
+        bool success = false;
+        try {
+          final res = await Process.run('pactl', ['set-sink-mute', '@DEFAULT_SINK@', 'toggle']);
+          if (res.exitCode == 0) success = true;
+        } catch (_) {}
+
+        if (!success) {
+          try {
+            await Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', 'toggle']);
+          } catch (_) {}
+        }
+
+        _broadcast({
+          "type": "state_update",
+          "key": "is_muted",
+          "value": isMuted,
         });
+        notifyListeners();
         break;
 
       case 'brightness':
         if (value != null) {
           final b = (value as num).toInt().clamp(5, 100);
           currentBrightness = b;
-          Process.run('brightnessctl', ['set', '$b%']).catchError((_) {
-            return Process.run('xrandr', ['--output', 'eDP-1', '--brightness', '${b / 100}']);
-          });
+          final display = await _getDisplayOutput();
+
+          bool success = false;
+          try {
+            final res = await Process.run('brightnessctl', ['set', '$b%']);
+            if (res.exitCode == 0) success = true;
+          } catch (_) {}
+
+          if (!success) {
+            try {
+              final brightVal = (b / 100.0).toStringAsFixed(2);
+              await Process.run('xrandr', ['--output', display, '--brightness', brightVal]);
+            } catch (e) {
+              debugPrint("Brightness execution error: $e");
+            }
+          }
+
           _broadcast({
             "type": "state_update",
             "key": "brightness",
@@ -207,35 +271,95 @@ class DartServerService extends ChangeNotifier {
 
       case 'mpris_action':
         if (payload.isNotEmpty) {
-          Process.run('playerctl', [payload]);
+          try {
+            await Process.run('playerctl', [payload]);
+          } catch (e) {
+            debugPrint("MPRIS action error: $e");
+          }
         }
         break;
 
       case 'kde_action':
         if (payload.isNotEmpty) {
-          Process.run('sh', ['-c', payload]);
+          try {
+            await Process.run('sh', ['-c', payload]);
+          } catch (e) {
+            debugPrint("KDE action error: $e");
+          }
         }
         break;
     }
   }
 
-  // --- Metrics Collection Loop ---
+  // --- Differential Metrics & State Tracking Loop ---
 
   void _startMetricsLoop() {
     _metricsTimer?.cancel();
-    _metricsTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+    _metricsTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) async {
       if (!Platform.isLinux || _clients.isEmpty) return;
 
       await _readLinuxMetrics();
-      _broadcast({
-        "type": "state_poll",
-        "state": {
-          "volume": currentVolume,
-          "brightness": currentBrightness,
-          "metrics": metrics,
-        }
-      });
+      await _checkDifferentialStateChanges();
     });
+  }
+
+  Future<void> _checkDifferentialStateChanges() async {
+    try {
+      bool changed = false;
+
+      // 1. Differential Audio Volume Query
+      final pactlVol = await Process.run('pactl', ['get-sink-volume', '@DEFAULT_SINK@']);
+      if (pactlVol.exitCode == 0) {
+        final match = RegExp(r'(\d+)%').firstMatch(pactlVol.stdout as String);
+        if (match != null) {
+          final v = int.tryParse(match.group(1)!) ?? currentVolume;
+          if (v != currentVolume) {
+            currentVolume = v;
+            changed = true;
+            _broadcast({"type": "state_update", "key": "volume", "value": currentVolume});
+          }
+        }
+      }
+
+      // 2. Differential Audio Mute Query
+      final pactlMute = await Process.run('pactl', ['get-sink-mute', '@DEFAULT_SINK@']);
+      if (pactlMute.exitCode == 0) {
+        final isMuteNow = (pactlMute.stdout as String).toLowerCase().contains('yes');
+        if (isMuteNow != isMuted) {
+          isMuted = isMuteNow;
+          changed = true;
+          _broadcast({"type": "state_update", "key": "is_muted", "value": isMuted});
+        }
+      }
+
+      // 3. Zero-CPU Sysfs Brightness Query
+      try {
+        final sysDir = Directory('/sys/class/backlight');
+        if (sysDir.existsSync()) {
+          final entries = sysDir.listSync();
+          if (entries.isNotEmpty) {
+            final curFile = File('${entries.first.path}/actual_brightness');
+            final maxFile = File('${entries.first.path}/max_brightness');
+            if (curFile.existsSync() && maxFile.existsSync()) {
+              final curB = int.tryParse(curFile.readAsStringSync().trim()) ?? 0;
+              final maxB = int.tryParse(maxFile.readAsStringSync().trim()) ?? 100;
+              if (maxB > 0) {
+                final percent = ((curB / maxB) * 100).round();
+                if ((percent - currentBrightness).abs() >= 2) {
+                  currentBrightness = percent;
+                  changed = true;
+                  _broadcast({"type": "state_update", "key": "brightness", "value": currentBrightness});
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      if (changed) {
+        notifyListeners();
+      }
+    } catch (_) {}
   }
 
   Future<void> _readLinuxMetrics() async {

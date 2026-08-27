@@ -169,6 +169,8 @@ class WebSocketService extends ChangeNotifier {
 
 
 
+  bool isMuted = false;
+
   void _handleMessage(dynamic message) {
     try {
       final data = jsonDecode(message);
@@ -179,11 +181,11 @@ class WebSocketService extends ChangeNotifier {
         pinRequired = data['pin_required'] ?? false;
         isConnected = true;
 
-
         if (data['state'] != null) {
           final state = data['state'];
           currentVolume = state['volume'] ?? currentVolume;
           currentBrightness = state['brightness'] ?? currentBrightness;
+          isMuted = state['is_muted'] ?? state['muted'] ?? isMuted;
           if (state['metrics'] != null) metrics = Map<String, dynamic>.from(state['metrics']);
         }
         notifyListeners();
@@ -192,12 +194,14 @@ class WebSocketService extends ChangeNotifier {
         final val = data['value'];
         if (key == 'volume') currentVolume = val;
         if (key == 'brightness') currentBrightness = val;
+        if (key == 'is_muted' || key == 'muted') isMuted = val == true || val == 1;
         notifyListeners();
       } else if (type == 'state_poll') {
         if (data['state'] != null) {
           final state = data['state'];
           currentVolume = state['volume'] ?? currentVolume;
           currentBrightness = state['brightness'] ?? currentBrightness;
+          isMuted = state['is_muted'] ?? state['muted'] ?? isMuted;
           if (state['metrics'] != null) metrics = Map<String, dynamic>.from(state['metrics']);
           notifyListeners();
         }
