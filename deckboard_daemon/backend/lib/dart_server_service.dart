@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'linux_actions_service.dart';
+import 'system_actions_service.dart';
 
-class DartServerService extends ChangeNotifier {
+class DartServerService {
   static final DartServerService _instance = DartServerService._internal();
   factory DartServerService() => _instance;
   DartServerService._internal();
@@ -56,28 +54,47 @@ class DartServerService extends ChangeNotifier {
     try {
       _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
       isRunning = true;
-      debugPrint("🚀 [DartServerService] Running on port $port");
-      notifyListeners();
-
+      print("🚀 [DartServerService] Running on port $port");
+      
       _server!.listen((HttpRequest request) async {
         if (request.uri.path == '/ws') {
           try {
             final socket = await WebSocketTransformer.upgrade(request);
             _handleClientConnect(socket);
           } catch (e) {
-            debugPrint("WS Upgrade Error: $e");
+            print("WS Upgrade Error: $e");
           }
         } else {
-          request.response
-            ..statusCode = HttpStatus.notFound
-            ..write('KDeDeck Server Running')
-            ..close();
+          try {
+            final uri = request.uri.path == '/' ? '/index.html' : request.uri.path;
+            final file = File('../frontend$uri');
+            if (await file.exists()) {
+              final ext = uri.split('.').last;
+              var contentType = 'text/plain';
+              if (ext == 'html') contentType = 'text/html';
+              if (ext == 'css') contentType = 'text/css';
+              if (ext == 'js') contentType = 'application/javascript';
+              if (ext == 'png') contentType = 'image/png';
+              
+              request.response.headers.contentType = ContentType.parse(contentType);
+              await file.openRead().pipe(request.response);
+            } else {
+              request.response
+                ..statusCode = HttpStatus.notFound
+                ..write('Not Found')
+                ..close();
+            }
+          } catch (e) {
+            request.response
+              ..statusCode = HttpStatus.internalServerError
+              ..close();
+          }
         }
       });
 
       _startMetricsLoop();
     } catch (e) {
-      debugPrint("❌ [DartServerService] Failed to bind port $port: $e");
+      print("❌ [DartServerService] Failed to bind port $port: $e");
     }
   }
 
@@ -89,12 +106,11 @@ class DartServerService extends ChangeNotifier {
     _clients.clear();
     await _server?.close(force: true);
     isRunning = false;
-    notifyListeners();
-  }
+      }
 
   void _handleClientConnect(WebSocket socket) {
     _clients.add(socket);
-    debugPrint("📱 Client connected! Total clients: ${_clients.length}");
+    print("📱 Client connected! Total clients: ${_clients.length}");
 
     if (configData == null) {
       configData = _getDefaultConfig();
@@ -119,7 +135,7 @@ class DartServerService extends ChangeNotifier {
       },
       onDone: () {
         _clients.remove(socket);
-        debugPrint("Client disconnected. Remaining: ${_clients.length}");
+        print("Client disconnected. Remaining: ${_clients.length}");
       },
       onError: (err) {
         _clients.remove(socket);
@@ -139,18 +155,60 @@ class DartServerService extends ChangeNotifier {
         _executeAction(action, payload, value);
       } else if (type == 'save_config') {
         if (data['config'] != null) {
-          configData = Map<String, dynamic>.from(data['config']);
+          final rawConfig = Map<String, dynamic>.from(data['config']);
+          _validateConfig(rawConfig);
+          configData = rawConfig;
           _saveConfigLocal();
           _broadcast({
             "type": "config_updated",
             "config": configData,
           });
-          notifyListeners();
         }
+      } else if (type == 'get_system_apps') {
+        _sendSystemApps(socket);
       }
     } catch (e) {
-      debugPrint("Server message parse error: $e");
+      print("Server message parse error: $e");
     }
+  }
+
+  void _validateConfig(Map<String, dynamic> config) {
+    if (config['boards'] == null) return;
+    for (var board in config['boards']) {
+      int cols = board['grid_columns'] ?? 4;
+      int rows = board['grid_rows'] ?? 3;
+      if (board['items'] == null) continue;
+      
+      for (var item in board['items']) {
+        // Enforce slider security
+        if (item['type'] == 'volume_slider' || item['type'] == 'brightness_slider') {
+          item['span_cols'] = 1;
+          item['span_rows'] = 4;
+        }
+
+        // Clamp spans to not exceed board dimensions
+        int spanCols = item['span_cols'] ?? 1;
+        int spanRows = item['span_rows'] ?? 1;
+        if (spanCols > cols) item['span_cols'] = cols;
+        if (spanRows > rows) item['span_rows'] = rows;
+
+        // Ensure positions are within bounds
+        int x = item['grid_x'] ?? 0;
+        int y = item['grid_y'] ?? 0;
+        if (x + (item['span_cols'] as int) > cols) item['grid_x'] = cols - (item['span_cols'] as int);
+        if (y + (item['span_rows'] as int) > rows) item['grid_y'] = rows - (item['span_rows'] as int);
+        if ((item['grid_x'] as int) < 0) item['grid_x'] = 0;
+        if ((item['grid_y'] as int) < 0) item['grid_y'] = 0;
+      }
+    }
+  }
+
+  Future<void> _sendSystemApps(WebSocket socket) async {
+    final apps = await SystemActionsService.getInstalledApps();
+    _sendToSocket(socket, {
+      "type": "system_apps_list",
+      "apps": apps
+    });
   }
 
   void _broadcast(Map<String, dynamic> msgObj) {
@@ -171,61 +229,56 @@ class DartServerService extends ChangeNotifier {
   // --- Linux System Execution Engine ---
 
   void _executeAction(String action, String payload, dynamic value) async {
-    if (!Platform.isLinux) return;
-
-    debugPrint("⚡ Executing Action: $action | payload: $payload | value: $value");
+    print("⚡ Executing Action: $action | payload: $payload | value: $value");
 
     switch (action) {
       case 'launch_app':
       case 'open_url':
-        await LinuxActionsService.executeLaunch(payload);
+        await SystemActionsService.executeLaunch(payload);
         break;
 
       case 'audio_volume':
         if (value != null) {
           final vol = (value as num).toInt().clamp(0, 100);
           currentVolume = vol;
-          await LinuxActionsService.setVolume(vol);
+          await SystemActionsService.setVolume(vol);
           _broadcast({
             "type": "state_update",
             "key": "volume",
             "value": currentVolume,
           });
-          notifyListeners();
-        }
+                  }
         break;
 
       case 'audio_mute_toggle':
         isMuted = !isMuted;
-        await LinuxActionsService.toggleMute();
+        await SystemActionsService.toggleMute();
         _broadcast({
           "type": "state_update",
           "key": "is_muted",
           "value": isMuted,
         });
-        notifyListeners();
-        break;
+                break;
 
       case 'brightness':
         if (value != null) {
           final b = (value as num).toInt().clamp(5, 100);
           currentBrightness = b;
-          await LinuxActionsService.setBrightness(b);
+          await SystemActionsService.setBrightness(b);
           _broadcast({
             "type": "state_update",
             "key": "brightness",
             "value": currentBrightness,
           });
-          notifyListeners();
-        }
+                  }
         break;
 
       case 'mpris_action':
-        await LinuxActionsService.executeMpris(payload);
+        await SystemActionsService.executeMpris(payload);
         break;
 
       case 'kde_action':
-        await LinuxActionsService.executeLaunch(payload);
+        await SystemActionsService.executeLaunch(payload);
         break;
     }
   }
@@ -298,8 +351,7 @@ class DartServerService extends ChangeNotifier {
       } catch (_) {}
 
       if (changed) {
-        notifyListeners();
-      }
+              }
     } catch (_) {}
   }
 
@@ -334,24 +386,28 @@ class DartServerService extends ChangeNotifier {
   // --- Persistence ---
 
   Future<void> _loadConfig() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('deck_config_data');
-
-    if (jsonStr != null) {
-      try {
-        configData = jsonDecode(jsonStr);
-      } catch (_) {
+    try {
+      final file = File('deckboard_config.json');
+      if (await file.exists()) {
+        final str = await file.readAsString();
+        configData = jsonDecode(str);
+      } else {
         configData = _getDefaultConfig();
       }
-    } else {
+    } catch (e) {
+      print("Error loading config: $e");
       configData = _getDefaultConfig();
     }
   }
 
   Future<void> _saveConfigLocal() async {
     if (configData == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('deck_config_data', jsonEncode(configData));
+    try {
+      final file = File('deckboard_config.json');
+      await file.writeAsString(jsonEncode(configData));
+    } catch (e) {
+      print("Error saving config: $e");
+    }
   }
 
   Map<String, dynamic> _getDefaultConfig() {

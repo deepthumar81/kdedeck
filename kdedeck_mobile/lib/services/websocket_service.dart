@@ -9,6 +9,7 @@ class WebSocketService extends ChangeNotifier {
   bool isConnected = false;
   bool pinRequired = false;
   bool isBatterySaverMode = false;
+  bool enableDragDrop = false;
 
   String serverIp = "192.168.29.128";
   int serverPort = 8484;
@@ -73,6 +74,7 @@ class WebSocketService extends ChangeNotifier {
     }
 
     isBatterySaverMode = prefs.getBool('battery_saver') ?? false;
+    enableDragDrop = prefs.getBool('enable_drag_drop') ?? false;
 
     connect();
   }
@@ -255,12 +257,17 @@ class WebSocketService extends ChangeNotifier {
   }
 
   void toggleBatterySaver(bool val) async {
-
-
     isBatterySaverMode = val;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('battery_saver', val);
+  }
+
+  void toggleDragDrop(bool val) async {
+    enableDragDrop = val;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('enable_drag_drop', val);
   }
 
   Future<void> updateServerConnection(String ip, int port, String newPin) async {

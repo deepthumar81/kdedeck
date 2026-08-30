@@ -18,6 +18,7 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
   Map<String, dynamic>? _draftConfig;
   bool _isDraftDirty = false;
   bool _isDarkMode = true;
+  bool _useFlatTheme = true; // Default to flat on Desktop for performance
 
   Color get bgCol => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFE2E8F0);
   Color get cardCol => _isDarkMode ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
@@ -106,8 +107,13 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
             ],
           ),
 
-          Row(
-            children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              reverse: true,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
               // Global Theme Switcher
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -123,6 +129,28 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                       activeColor: accentCol,
                       onChanged: (val) {
                         setState(() => _isDarkMode = !val);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              
+              // Flat Theme Switcher (Performance Mode)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: bgCol, borderRadius: BorderRadius.circular(20)),
+                child: Row(
+                  children: [
+                    Icon(_useFlatTheme ? Icons.speed_rounded : Icons.style_rounded, size: 16, color: accentCol),
+                    const SizedBox(width: 6),
+                    Text("Flat Theme", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textPrimary)),
+                    const SizedBox(width: 6),
+                    Switch(
+                      value: _useFlatTheme,
+                      activeColor: accentCol,
+                      onChanged: (val) {
+                        setState(() => _useFlatTheme = val);
                       },
                     ),
                   ],
@@ -174,6 +202,9 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
               ),
             ],
           ),
+        ),
+      ),
+
         ],
       ),
     );
@@ -309,6 +340,30 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
     );
   }
 
+  void _handleItemDropped(int draggedIndex, int targetCol, int targetRow) {
+    final boards = _draftConfig?['boards'] as List<dynamic>? ?? [];
+    if (boards.isEmpty || _activeBoardIdx >= boards.length) return;
+    final items = boards[_activeBoardIdx]['items'] as List<dynamic>? ?? [];
+
+    if (draggedIndex < 0 || draggedIndex >= items.length) return;
+
+    setState(() {
+      final draggedItem = items[draggedIndex];
+      final targetItemIdx = items.indexWhere((item) => item['grid_x'] == targetCol && item['grid_y'] == targetRow);
+      
+      if (targetItemIdx != -1) {
+        // Swap positions
+        items[targetItemIdx]['grid_x'] = draggedItem['grid_x'];
+        items[targetItemIdx]['grid_y'] = draggedItem['grid_y'];
+      }
+      
+      draggedItem['grid_x'] = targetCol;
+      draggedItem['grid_y'] = targetRow;
+
+      _isDraftDirty = true;
+    });
+  }
+
   Widget _buildMatrixWorkspace(WebSocketService ws, List<dynamic> boards) {
     if (boards.isEmpty || _activeBoardIdx >= boards.length) {
       return Center(child: Text("No boards found. Click + to create one.", style: TextStyle(color: textPrimary)));
@@ -361,10 +416,13 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                       itemCount: items.length,
                       getSpanCols: (idx) => (items[idx]['span_cols'] as num? ?? 1).toInt(),
                       getSpanRows: (idx) => (items[idx]['span_rows'] as num? ?? 1).toInt(),
+                      getGridX: (idx) => items[idx]['grid_x'] as int?,
+                      getGridY: (idx) => items[idx]['grid_y'] as int?,
                       itemBuilder: (context, idx, spanCols, spanRows) {
                         return _buildNeumorphicButtonTile(items[idx], idx, spanCols, spanRows);
                       },
                       emptyBuilder: (context) => _buildNeumorphicEmptyTile(),
+                      onDrop: (draggedIdx, targetCol, targetRow) => _handleItemDropped(draggedIdx, targetCol, targetRow),
                     ),
                   ),
                 ),
@@ -377,21 +435,26 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
   }
 
   Widget _buildSliderPreviewCard(Map<String, dynamic> item, int itemIdx, int spanCols, int spanRows, String label, IconData icon, Color color) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        RepaintBoundary(
-          child: Container(
-            decoration: BoxDecoration(
-              color: cardCol,
-              borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(color: darkShadow.withOpacity(0.6), offset: const Offset(4, 4), blurRadius: 8),
-                BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-4, -4), blurRadius: 8),
-              ],
-            ),
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: _useFlatTheme
+                ? BoxDecoration(
+                    color: cardCol,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: textPrimary.withOpacity(0.1), width: 1),
+                  )
+                : BoxDecoration(
+                    color: cardCol,
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(color: darkShadow.withOpacity(0.6), offset: const Offset(4, 4), blurRadius: 8),
+                      BoxShadow(color: lightShadow.withOpacity(0.5), offset: const Offset(-4, -4), blurRadius: 8),
+                    ],
+                  ),
           ),
-        ),
         Material(
           color: Colors.transparent,
           child: InkWell(
@@ -424,7 +487,7 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
           ),
         ),
       ],
-    );
+    ));
   }
 
   Widget _buildNeumorphicButtonTile(Map<String, dynamic> item, int itemIdx, int spanCols, int spanRows) {
@@ -434,21 +497,26 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
 
     final isMultiSpan = spanCols > 1 || spanRows > 1;
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        RepaintBoundary(
-          child: Container(
-            decoration: BoxDecoration(
-              color: cardCol,
-              borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(color: darkShadow.withOpacity(0.7), offset: const Offset(4, 4), blurRadius: 8),
-                BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
-              ],
-            ),
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: _useFlatTheme
+                ? BoxDecoration(
+                    color: cardCol,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: textPrimary.withOpacity(0.1), width: 1),
+                  )
+                : BoxDecoration(
+                    color: cardCol,
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(color: darkShadow.withOpacity(0.7), offset: const Offset(4, 4), blurRadius: 8),
+                      BoxShadow(color: lightShadow.withOpacity(0.6), offset: const Offset(-4, -4), blurRadius: 8),
+                    ],
+                  ),
           ),
-        ),
         Material(
           color: Colors.transparent,
           child: InkWell(
@@ -479,25 +547,30 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
           ),
         ),
       ],
-    );
+    ));
   }
 
   Widget _buildNeumorphicEmptyTile() {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        RepaintBoundary(
-          child: Container(
-            decoration: BoxDecoration(
-              color: cardCol,
-              borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(3, 3), blurRadius: 6),
-                BoxShadow(color: lightShadow.withOpacity(0.4), offset: const Offset(-3, -3), blurRadius: 6),
-              ],
-            ),
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: _useFlatTheme
+                ? BoxDecoration(
+                    color: cardCol.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: textPrimary.withOpacity(0.05), width: 1),
+                  )
+                : BoxDecoration(
+                    color: cardCol,
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(color: darkShadow.withOpacity(0.4), offset: const Offset(3, 3), blurRadius: 6),
+                      BoxShadow(color: lightShadow.withOpacity(0.4), offset: const Offset(-3, -3), blurRadius: 6),
+                    ],
+                  ),
           ),
-        ),
         Material(
           color: Colors.transparent,
           child: InkWell(
@@ -511,7 +584,7 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
           ),
         ),
       ],
-    );
+    ));
   }
 
   void _openItemEditorDialog(int? itemIdx) {
@@ -561,6 +634,9 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                     // Item Type Picker
                     DropdownButtonFormField<String>(
                       value: selectedType,
+                      menuMaxHeight: 240,
+                      borderRadius: BorderRadius.circular(12),
+                      elevation: 2,
                       style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold),
                       dropdownColor: cardCol,
                       decoration: InputDecoration(
@@ -614,6 +690,9 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                     // Tile Size Span Picker
                     DropdownButtonFormField<String>(
                       value: "${selectedSpanCols}x${selectedSpanRows}",
+                      menuMaxHeight: 240,
+                      borderRadius: BorderRadius.circular(12),
+                      elevation: 2,
                       style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold),
                       dropdownColor: cardCol,
                       decoration: InputDecoration(
@@ -647,6 +726,9 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
                     if (selectedType == 'button')
                       DropdownButtonFormField<String>(
                         value: selectedAction,
+                        menuMaxHeight: 240,
+                        borderRadius: BorderRadius.circular(12),
+                        elevation: 2,
                         style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold),
                         dropdownColor: cardCol,
                         decoration: InputDecoration(
