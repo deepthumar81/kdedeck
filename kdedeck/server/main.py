@@ -199,6 +199,10 @@ class KdeDeckServer:
                     "message": f"Action Failed: {str(err)}"
                 })
 
+        elif msg_type == "set_metrics_enabled":
+            self.metrics_enabled = bool(data.get("enabled", True))
+            logger.info(f"Hardware metrics polling set to: {self.metrics_enabled}")
+
         elif msg_type == "save_config":
             new_config = data.get("config")
             if new_config:
@@ -225,7 +229,7 @@ class KdeDeckServer:
             if self.sockets:
                 vol = AudioBrightnessPlugin.get_volume()
                 bright = AudioBrightnessPlugin.get_brightness()
-                metrics = SystemMetricsPlugin.get_metrics()
+                metrics = SystemMetricsPlugin.get_metrics() if getattr(self, 'metrics_enabled', True) else None
                 await self.broadcast({
                     "type": "state_poll",
                     "state": {
@@ -234,6 +238,7 @@ class KdeDeckServer:
                         "metrics": metrics
                     }
                 })
+
 
     async def start(self):
         app = web.Application()

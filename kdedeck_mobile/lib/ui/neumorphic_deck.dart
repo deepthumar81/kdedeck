@@ -55,6 +55,26 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
     );
   }
 
+  void _handleItemDroppedMobile(WebSocketService ws, Map<String, dynamic> board, int draggedIndex, int targetCol, int targetRow) {
+    final items = board['items'] as List<dynamic>? ?? [];
+    if (draggedIndex < 0 || draggedIndex >= items.length) return;
+
+    final draggedItem = items[draggedIndex];
+    final targetItemIdx = items.indexWhere((item) => item['grid_x'] == targetCol && item['grid_y'] == targetRow);
+    
+    if (targetItemIdx != -1) {
+      items[targetItemIdx]['grid_x'] = draggedItem['grid_x'];
+      items[targetItemIdx]['grid_y'] = draggedItem['grid_y'];
+    }
+    
+    draggedItem['grid_x'] = targetCol;
+    draggedItem['grid_y'] = targetRow;
+
+    if (ws.configData != null) {
+      ws.sendSaveConfig(ws.configData!);
+    }
+  }
+
   Widget _buildBoardContent(WebSocketService ws, Map<String, dynamic> board, int totalBoards) {
     final showMetrics = ws.showMetrics && (ws.configData?['show_metrics'] != false);
     final items = board['items'] as List<dynamic>? ?? [];
@@ -80,10 +100,14 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                 itemCount: items.length,
                 getSpanCols: (idx) => (items[idx]['span_cols'] as num? ?? 1).toInt(),
                 getSpanRows: (idx) => (items[idx]['span_rows'] as num? ?? 1).toInt(),
+                getGridX: (idx) => items[idx]['grid_x'] as int?,
+                getGridY: (idx) => items[idx]['grid_y'] as int?,
+                isDraggable: ws.enableDragDrop,
                 itemBuilder: (context, idx, spanCols, spanRows) {
                   return _buildNeumorphicTile(ws, items[idx], spanCols, spanRows);
                 },
                 emptyBuilder: (context) => _buildEmptyNeumorphicSlot(),
+                onDrop: (draggedIdx, targetCol, targetRow) => _handleItemDroppedMobile(ws, board, draggedIdx, targetCol, targetRow),
               ),
             ),
           ),
@@ -614,6 +638,18 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                 activeColor: const Color(0xFF22C55E),
                 onChanged: (val) {
                   ws.toggleBatterySaver(val);
+                },
+              ),
+              Divider(color: textPrimary.withOpacity(0.12), height: 16),
+
+              // Advanced: Enable Drag Drop
+              SwitchListTile(
+                title: Text("Enable Drag & Drop (Advanced)", style: TextStyle(fontWeight: FontWeight.bold, color: textPrimary)),
+                subtitle: Text("WARNING: Can accidentally break grid layout when tapping.", style: TextStyle(fontSize: 11, color: const Color(0xFFEF4444))),
+                value: ws.enableDragDrop,
+                activeColor: const Color(0xFFEF4444),
+                onChanged: (val) {
+                  ws.toggleDragDrop(val);
                 },
               ),
               Divider(color: textPrimary.withOpacity(0.12), height: 24),

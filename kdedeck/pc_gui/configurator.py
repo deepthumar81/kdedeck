@@ -15,13 +15,21 @@ from kdedeck.server.app_scanner import AppScanner
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+# Anti-Aliased Clean System Vector Font tuple for Linux/KDE
+FONT_MAIN = "DejaVu Sans"
+FONT_TITLE = (FONT_MAIN, 16, "bold")
+FONT_HEADER = (FONT_MAIN, 18, "bold")
+FONT_BOLD = (FONT_MAIN, 12, "bold")
+FONT_NORMAL = (FONT_MAIN, 11, "normal")
+FONT_SMALL = (FONT_MAIN, 10, "normal")
+
 class KdeDeckConfiguratorApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("KdeDeck v1.0 - PC Desktop Configurator")
-        self.geometry("960 x 680")
-        self.minsize(840, 600)
+        self.geometry("980 x 680")
+        self.minsize(860, 600)
 
         self.config_mgr = ConfigManager()
         self.config_data = self.config_mgr.get_config()
@@ -43,16 +51,16 @@ class KdeDeckConfiguratorApp(ctk.CTk):
 
     def build_ui(self):
         # Top Header Bar
-        self.header_frame = ctk.CTkFrame(self, height=60, corner_radius=0, fg_color="#0f172a")
+        self.header_frame = ctk.CTkFrame(self, height=64, corner_radius=0, fg_color="#0f172a")
         self.header_frame.pack(fill="x", side="top")
 
         self.logo_label = ctk.CTkLabel(
             self.header_frame, 
-            text="⚡ KDE DECK CONFIGURATOR (v1.0)", 
-            font=ctk.CTkFont(size=18, weight="bold"),
+            text="⚡ KDE DECK CONFIGURATOR", 
+            font=FONT_HEADER,
             text_color="#38bdf8"
         )
-        self.logo_label.pack(side="left", padx=20, pady=15)
+        self.logo_label.pack(side="left", padx=20, pady=16)
 
         local_ip = self.get_local_ip()
         port = self.config_data.get("port", 8484)
@@ -61,23 +69,23 @@ class KdeDeckConfiguratorApp(ctk.CTk):
         self.conn_info_label = ctk.CTkLabel(
             self.header_frame,
             text=f"📱 Phone Link: http://{local_ip}:{port}  |  PIN: {pin}",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=FONT_BOLD,
             text_color="#4ade80"
         )
-        self.conn_info_label.pack(side="right", padx=20, pady=15)
+        self.conn_info_label.pack(side="right", padx=20, pady=16)
 
         # Main Layout (Left Sidebar + Right Editor Workspace)
         self.main_body = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_body.pack(fill="both", expand=True, padx=15, pady=15)
+        self.main_body.pack(fill="both", expand=True, padx=16, pady=16)
 
         # Left Sidebar (Board Navigation & Global Settings)
-        self.sidebar = ctk.CTkFrame(self.main_body, width=240, corner_radius=16, fg_color="#1e293b")
-        self.sidebar.pack(side="left", fill="y", padx=(0, 10))
+        self.sidebar = ctk.CTkFrame(self.main_body, width=250, corner_radius=16, fg_color="#1e293b")
+        self.sidebar.pack(side="left", fill="y", padx=(0, 12))
 
         self.boards_header = ctk.CTkLabel(
             self.sidebar, 
             text="DECKS & BOARDS", 
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=FONT_BOLD,
             text_color="#94a3b8"
         )
         self.boards_header.pack(anchor="w", padx=16, pady=(16, 8))
@@ -90,7 +98,8 @@ class KdeDeckConfiguratorApp(ctk.CTk):
             text="+ Create New Deck",
             fg_color="#0284c7",
             hover_color="#0369a1",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=FONT_BOLD,
+            corner_radius=10,
             command=self.create_new_board
         )
         self.add_board_btn.pack(fill="x", padx=12, pady=10)
@@ -102,7 +111,7 @@ class KdeDeckConfiguratorApp(ctk.CTk):
         self.grid_title = ctk.CTkLabel(
             self.grid_settings_frame, 
             text="MATRIX GRID SIZE", 
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=FONT_BOLD,
             text_color="#94a3b8"
         )
         self.grid_title.pack(anchor="w", pady=(4, 4))
@@ -110,6 +119,8 @@ class KdeDeckConfiguratorApp(ctk.CTk):
         self.grid_cols_entry = ctk.CTkOptionMenu(
             self.grid_settings_frame,
             values=["3 Cols", "4 Cols", "5 Cols", "6 Cols", "8 Cols"],
+            font=FONT_NORMAL,
+            dropdown_font=FONT_NORMAL,
             command=self.on_grid_cols_changed
         )
         curr_cols = self.config_data.get("grid_columns", 4)
@@ -119,6 +130,8 @@ class KdeDeckConfiguratorApp(ctk.CTk):
         self.grid_rows_entry = ctk.CTkOptionMenu(
             self.grid_settings_frame,
             values=["3 Rows", "4 Rows", "5 Rows", "6 Rows", "7 Rows", "8 Rows"],
+            font=FONT_NORMAL,
+            dropdown_font=FONT_NORMAL,
             command=self.on_grid_rows_changed
         )
         curr_rows = self.config_data.get("grid_rows", 3)
@@ -129,13 +142,13 @@ class KdeDeckConfiguratorApp(ctk.CTk):
         self.workspace = ctk.CTkFrame(self.main_body, corner_radius=16, fg_color="#1e293b")
         self.workspace.pack(side="right", fill="both", expand=True)
 
-        self.workspace_header = ctk.CTkFrame(self.workspace, height=45, fg_color="transparent")
+        self.workspace_header = ctk.CTkFrame(self.workspace, height=48, fg_color="transparent")
         self.workspace_header.pack(fill="x", padx=16, pady=12)
 
         self.board_title_label = ctk.CTkLabel(
             self.workspace_header, 
             text="Deck Items Matrix Preview", 
-            font=ctk.CTkFont(size=16, weight="bold")
+            font=FONT_TITLE
         )
         self.board_title_label.pack(side="left")
 
@@ -144,7 +157,8 @@ class KdeDeckConfiguratorApp(ctk.CTk):
             text="💾 Save All Changes",
             fg_color="#16a34a",
             hover_color="#15803d",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=FONT_BOLD,
+            corner_radius=10,
             command=self.save_config
         )
         self.save_btn.pack(side="right", padx=5)
@@ -154,13 +168,14 @@ class KdeDeckConfiguratorApp(ctk.CTk):
             text="+ Add Button Item",
             fg_color="#2563eb",
             hover_color="#1d4ed8",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=FONT_BOLD,
+            corner_radius=10,
             command=self.create_new_item
         )
         self.add_item_btn.pack(side="right", padx=5)
 
         # Grid Workspace Matrix Preview
-        self.grid_preview_frame = ctk.CTkScrollableFrame(self.workspace, fg_color="#0f172a", corner_radius=12)
+        self.grid_preview_frame = ctk.CTkScrollableFrame(self.workspace, fg_color="#0f172a", corner_radius=14)
         self.grid_preview_frame.pack(fill="both", expand=True, padx=16, pady=(0, 16))
 
         self.render_sidebar_boards()
@@ -179,7 +194,8 @@ class KdeDeckConfiguratorApp(ctk.CTk):
                 fg_color="#3b82f6" if is_active else "transparent",
                 hover_color="#2563eb" if is_active else "#334155",
                 anchor="w",
-                font=ctk.CTkFont(size=13, weight="bold" if is_active else "normal"),
+                font=FONT_BOLD if is_active else FONT_NORMAL,
+                corner_radius=8,
                 command=lambda i=idx: self.select_board(i)
             )
             btn.pack(fill="x", pady=3)
@@ -209,27 +225,27 @@ class KdeDeckConfiguratorApp(ctk.CTk):
 
             item_card = ctk.CTkFrame(
                 self.grid_preview_frame, 
-                width=130, 
-                height=110, 
-                corner_radius=12,
+                width=140, 
+                height=115, 
+                corner_radius=14,
                 fg_color="#1e293b",
                 border_width=2,
                 border_color=self.get_color_hex(item.get("color", "neon-cyan"))
             )
-            item_card.grid(row=r, column=c, padx=8, pady=8, sticky="nsew")
+            item_card.grid(row=r, column=c, padx=10, pady=10, sticky="nsew")
 
             title_lbl = ctk.CTkLabel(
                 item_card, 
                 text=item.get("title", "Button"), 
-                font=ctk.CTkFont(size=12, weight="bold"),
-                wraplength=110
+                font=FONT_BOLD,
+                wraplength=120
             )
-            title_lbl.pack(pady=(12, 4))
+            title_lbl.pack(pady=(14, 4))
 
             action_lbl = ctk.CTkLabel(
                 item_card, 
                 text=item.get("action", "launch_app"), 
-                font=ctk.CTkFont(size=10),
+                font=FONT_SMALL,
                 text_color="#94a3b8"
             )
             action_lbl.pack(pady=2)
@@ -237,14 +253,15 @@ class KdeDeckConfiguratorApp(ctk.CTk):
             edit_btn = ctk.CTkButton(
                 item_card,
                 text="Edit",
-                width=60,
-                height=24,
-                font=ctk.CTkFont(size=11),
+                width=70,
+                height=26,
+                font=FONT_NORMAL,
+                corner_radius=8,
                 fg_color="#334155",
                 hover_color="#475569",
                 command=lambda i=item_idx: self.open_item_editor(i)
             )
-            edit_btn.pack(pady=(6, 8))
+            edit_btn.pack(pady=(6, 10))
 
     def get_color_hex(self, name):
         colors = {
@@ -308,16 +325,16 @@ class KdeDeckConfiguratorApp(ctk.CTk):
 
         editor = ctk.CTkToplevel(self)
         editor.title(f"Edit Item: {item.get('title')}")
-        editor.geometry("460 x 520")
+        editor.geometry("480 x 540")
         editor.attributes("-topmost", True)
 
-        ctk.CTkLabel(editor, text="Edit Button Configuration", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=15)
+        ctk.CTkLabel(editor, text="Edit Button Configuration", font=FONT_TITLE).pack(pady=16)
 
         # Installed App Picker
-        ctk.CTkLabel(editor, text="Pick Installed App (APT / Flatpak / Snap)", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=20)
+        ctk.CTkLabel(editor, text="Pick Installed App (APT / Flatpak / Snap)", font=FONT_BOLD).pack(anchor="w", padx=24)
         app_names = [f"{a['name']} ({a['exec']})" for a in self.installed_apps]
-        app_picker = ctk.CTkOptionMenu(editor, values=["-- Pick Installed App --"] + app_names)
-        app_picker.pack(fill="x", padx=20, pady=(2, 10))
+        app_picker = ctk.CTkOptionMenu(editor, values=["-- Pick Installed App --"] + app_names, font=FONT_NORMAL, dropdown_font=FONT_NORMAL)
+        app_picker.pack(fill="x", padx=24, pady=(2, 10))
 
         def on_app_pick(choice):
             for a in self.installed_apps:
@@ -334,35 +351,35 @@ class KdeDeckConfiguratorApp(ctk.CTk):
         app_picker.configure(command=on_app_pick)
 
         # Button Label
-        ctk.CTkLabel(editor, text="Button Label", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=20)
-        title_entry = ctk.CTkEntry(editor)
+        ctk.CTkLabel(editor, text="Button Label", font=FONT_BOLD).pack(anchor="w", padx=24)
+        title_entry = ctk.CTkEntry(editor, font=FONT_NORMAL)
         title_entry.insert(0, item.get("title", ""))
-        title_entry.pack(fill="x", padx=20, pady=(2, 10))
+        title_entry.pack(fill="x", padx=24, pady=(2, 10))
 
         # Action Type
-        ctk.CTkLabel(editor, text="Action Type", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=20)
+        ctk.CTkLabel(editor, text="Action Type", font=FONT_BOLD).pack(anchor="w", padx=24)
         actions = ["launch_app", "open_url", "audio_volume", "brightness", "audio_mute_toggle", "mpris_action", "kdeconnect_ring", "kde_action"]
-        action_picker = ctk.CTkOptionMenu(editor, values=actions)
+        action_picker = ctk.CTkOptionMenu(editor, values=actions, font=FONT_NORMAL, dropdown_font=FONT_NORMAL)
         action_picker.set(item.get("action", "launch_app"))
-        action_picker.pack(fill="x", padx=20, pady=(2, 10))
+        action_picker.pack(fill="x", padx=24, pady=(2, 10))
 
         # Payload
-        ctk.CTkLabel(editor, text="Payload (App Binary / URL / Command)", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=20)
-        payload_entry = ctk.CTkEntry(editor)
+        ctk.CTkLabel(editor, text="Payload (App Binary / URL / Command)", font=FONT_BOLD).pack(anchor="w", padx=24)
+        payload_entry = ctk.CTkEntry(editor, font=FONT_NORMAL)
         payload_entry.insert(0, item.get("payload", ""))
-        payload_entry.pack(fill="x", padx=20, pady=(2, 10))
+        payload_entry.pack(fill="x", padx=24, pady=(2, 10))
 
         # Icon Name
-        ctk.CTkLabel(editor, text="Icon Name (App Icon / Lucide Name)", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=20)
-        icon_entry = ctk.CTkEntry(editor)
+        ctk.CTkLabel(editor, text="Icon Name (App Icon / Lucide Name)", font=FONT_BOLD).pack(anchor="w", padx=24)
+        icon_entry = ctk.CTkEntry(editor, font=FONT_NORMAL)
         icon_entry.insert(0, item.get("icon", "terminal"))
-        icon_entry.pack(fill="x", padx=20, pady=(2, 10))
+        icon_entry.pack(fill="x", padx=24, pady=(2, 10))
 
         # Neon Color Accent
-        ctk.CTkLabel(editor, text="Neon Color Accent", font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=20)
-        color_picker = ctk.CTkOptionMenu(editor, values=["neon-cyan", "neon-green", "neon-blue", "neon-purple", "neon-pink", "neon-amber", "neon-red", "neon-orange", "neon-yellow"])
+        ctk.CTkLabel(editor, text="Neon Color Accent", font=FONT_BOLD).pack(anchor="w", padx=24)
+        color_picker = ctk.CTkOptionMenu(editor, values=["neon-cyan", "neon-green", "neon-blue", "neon-purple", "neon-pink", "neon-amber", "neon-red", "neon-orange", "neon-yellow"], font=FONT_NORMAL, dropdown_font=FONT_NORMAL)
         color_picker.set(item.get("color", "neon-cyan"))
-        color_picker.pack(fill="x", padx=20, pady=(2, 16))
+        color_picker.pack(fill="x", padx=24, pady=(2, 16))
 
         def save_item():
             item["title"] = title_entry.get()
@@ -379,10 +396,10 @@ class KdeDeckConfiguratorApp(ctk.CTk):
             editor.destroy()
 
         btn_frame = ctk.CTkFrame(editor, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20, pady=10)
+        btn_frame.pack(fill="x", padx=24, pady=12)
 
-        ctk.CTkButton(btn_frame, text="Delete Item", fg_color="#ef4444", hover_color="#dc2626", command=delete_item).pack(side="left")
-        ctk.CTkButton(btn_frame, text="Save Item Changes", fg_color="#16a34a", hover_color="#15803d", command=save_item).pack(side="right")
+        ctk.CTkButton(btn_frame, text="Delete Item", fg_color="#ef4444", hover_color="#dc2626", font=FONT_BOLD, corner_radius=8, command=delete_item).pack(side="left")
+        ctk.CTkButton(btn_frame, text="Save Item Changes", fg_color="#16a34a", hover_color="#15803d", font=FONT_BOLD, corner_radius=8, command=save_item).pack(side="right")
 
     def save_config(self):
         self.config_mgr.save_config(self.config_data)

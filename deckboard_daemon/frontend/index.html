@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deckboard Configurator</title>
+    <!-- Google Material Symbols Outlined -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css">
+</head>
+<body oncontextmenu="return false;"> <!-- Basic block for right-click inspect -->
+    <div class="layout-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h3>DECKS & BOARDS</h3>
+                <button id="add-board-btn" class="icon-btn" title="Create New Deck Board"><span class="material-symbols-outlined">add_circle</span></button>
+            </div>
+            <div id="board-list" class="board-list">
+                <!-- Boards generated here -->
+            </div>
+            
+            <div class="sidebar-divider"></div>
+            
+            <div class="sidebar-settings">
+                <h3>GRID MATRIX SIZE</h3>
+                <div class="size-controls">
+                    <div class="input-group">
+                        <label>Cols</label>
+                        <select id="grid-cols-select">
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Rows</label>
+                        <select id="grid-rows-select">
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="sidebar-divider"></div>
+                
+                <h3>SETTINGS</h3>
+                <div class="setting-toggle" style="margin-bottom: 10px;">
+                    <label>Auto-Save</label>
+                    <label class="switch">
+                        <input type="checkbox" id="autosave-toggle" checked>
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <header>
+                <div class="header-left">
+                    <h1>Deckboard Configurator</h1>
+                    <span id="connection-status" class="status-offline">Offline</span>
+                </div>
+                <div class="header-right">
+                    <button id="manual-save-btn" class="btn-primary" style="display: none;"><span class="material-symbols-outlined">save</span> Save & Apply</button>
+                    <button id="add-btn" class="btn-primary"><span class="material-symbols-outlined">add</span> Add Button</button>
+                </div>
+            </header>
+
+            <main>
+                <div class="matrix-container" id="matrix-container">
+                    <!-- Grid will be generated here -->
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modal for adding/editing buttons -->
+    <div id="editor-modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title">Edit Button</h2>
+            <form id="editor-form">
+                <input type="hidden" id="edit-id">
+                
+                <div class="form-group">
+                    <label>Item Type</label>
+                    <select id="edit-type">
+                        <option value="button">Standard Button</option>
+                        <option value="volume_slider">Volume Slider</option>
+                        <option value="brightness_slider">Brightness Slider</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="title-group">
+                    <label>Button Label</label>
+                    <input type="text" id="edit-title">
+                </div>
+                
+                <div class="form-group">
+                    <label>Tile Size Span</label>
+                    <select id="edit-span">
+                        <option value="1x1">Normal Square Tile (1x1)</option>
+                        <option value="2x1">Wide Tile (2x1)</option>
+                        <option value="2x2">Big Square Tile (2x2)</option>
+                        <option value="1x3">Vertical Slider (1x3)</option>
+                        <option value="1x4">Tall Vertical Slider (1x4)</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                    <div id="custom-span-inputs" class="size-inputs" style="display: none; margin-top: 10px;">
+                        <input type="number" id="edit-span-cols" min="1" max="8" value="1">
+                        <span>x</span>
+                        <input type="number" id="edit-span-rows" min="1" max="8" value="1">
+                    </div>
+                </div>
+
+                <div class="form-group" id="action-group">
+                    <label>Action Type</label>
+                    <select id="edit-action">
+                        <option value="launch_app">Launch Application</option>
+                        <option value="open_url">Open Website URL</option>
+                        <option value="audio_volume">Audio Volume Control</option>
+                        <option value="brightness">Brightness Control</option>
+                        <option value="audio_mute_toggle">Toggle Audio Mute</option>
+                        <option value="mpris_action">Media Control</option>
+                        <option value="kde_action">KDE System Action</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" id="payload-group">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <label style="margin-bottom: 0;">Payload (App / URL)</label>
+                        <label style="font-size: 0.8rem; display: flex; align-items: center; gap: 5px;">
+                            <input type="checkbox" id="custom-payload-toggle"> Custom Command/URL
+                        </label>
+                    </div>
+                    
+                    <!-- Searchable Dropdown for System Apps -->
+                    <div id="app-search-container" class="dropdown-container">
+                        <input type="text" id="app-search-input" placeholder="Search installed apps (e.g. discover)..." autocomplete="off">
+                        <ul id="app-search-results" class="dropdown-list"></ul>
+                        <input type="hidden" id="edit-payload-app">
+                    </div>
+
+                    <!-- Custom Payload Textbox -->
+                    <input type="text" id="edit-payload-custom" style="display: none;" placeholder="e.g. flatpak run org.kde.discover">
+                </div>
+                
+                <div class="form-group" id="icon-group">
+                    <label>Icon Name (Material Symbols)</label>
+                    <input type="text" id="edit-icon" placeholder="e.g. terminal, language, volume_up">
+                </div>
+                
+                <div class="modal-actions">
+                    <button type="button" id="btn-cancel" class="btn-secondary">Cancel</button>
+                    <button type="button" id="btn-delete" class="btn-danger">Delete Button</button>
+                    <button type="submit" class="btn-primary">Save Button</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Security blocker script (F12) -->
+    <script>
+        document.onkeydown = function(e) {
+            if(e.keyCode == 123) return false;
+            if(e.ctrlKey && e.shiftKey && e.keyCode == 'I'.charCodeAt(0)) return false;
+            if(e.ctrlKey && e.shiftKey && e.keyCode == 'C'.charCodeAt(0)) return false;
+            if(e.ctrlKey && e.shiftKey && e.keyCode == 'J'.charCodeAt(0)) return false;
+            if(e.ctrlKey && e.keyCode == 'U'.charCodeAt(0)) return false;
+        }
+    </script>
+    <script src="app.js"></script>
+</body>
+</html>
