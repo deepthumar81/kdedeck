@@ -312,7 +312,26 @@ function createTile(item, idx, r, c, spanRows, spanCols) {
     let color = 'var(--accent-color)';
     if (item.type === "brightness_slider") color = '#F59E0B';
 
-    el.innerHTML = `<div class="tile-icon" style="color: ${color}"><span class="material-symbols-outlined">${icon}</span></div><div class="tile-title" style="color: ${color}">${item.title || 'Button'}</div>`;
+    if (item.action === 'clock_widget') {
+        el.innerHTML = `<div class="tile-title" style="color: ${color}; font-size: ${1 + (spanCols * 0.2)}rem; font-weight: bold; margin-top: auto; margin-bottom: auto;" id="clock_${item.id}">--:--</div>`;
+        const updateTime = () => {
+            const timeEl = document.getElementById(`clock_${item.id}`);
+            if (timeEl) {
+                const now = new Date();
+                timeEl.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+            }
+        };
+        updateTime(); // Call instantly
+        setInterval(updateTime, 1000);
+    } else if (item.icon_base64) {
+        el.innerHTML = `<img src="${item.icon_base64}" style="width: 100%; height: 100%; object-fit: contain; border-radius: 8px;">`;
+        if (item.title) el.innerHTML += `<div class="tile-title" style="color: ${color}; background: rgba(0,0,0,0.5); padding: 2px 4px; border-radius: 4px; position: absolute; bottom: 5px;">${item.title}</div>`;
+    } else if (item.system_icon_path) {
+        el.innerHTML = `<img src="/system_icons?path=${encodeURIComponent(item.system_icon_path)}" style="width: 60%; height: 60%; object-fit: contain; border-radius: 8px;">`;
+        if (item.title) el.innerHTML += `<div class="tile-title" style="color: ${color}">${item.title}</div>`;
+    } else {
+        el.innerHTML = `<div class="tile-icon" style="color: ${color}"><span class="material-symbols-outlined">${icon}</span></div><div class="tile-title" style="color: ${color}">${item.title || 'Button'}</div>`;
+    }
     
     if (item.type === "volume_slider" || item.type === "brightness_slider") {
         el.innerHTML += `<div class="tile-slider-track"><div class="tile-slider-fill" style="background: ${color}"></div></div>`;
@@ -373,10 +392,7 @@ function setupDropTarget(el, targetX, targetY, targetIdx = null) {
         let isValid = canFit(targetY, targetX, spanRows, spanCols, draggedItemIndex);
         
         if (!isValid) {
-            // Check if it can snap
-            if (findValidSnap(draggedItemIndex, targetX, targetY, spanCols, spanRows)) {
-                isValid = true;
-            } else if (targetIdx !== null) {
+            if (targetIdx !== null) {
                 // Check if it can swap
                 const tItem = items[targetIdx];
                 const oldDX = draggedItem.grid_x;
@@ -516,12 +532,15 @@ function updatePayloadVisibility() {
     const type = typeSelect.value;
     const action = actionSelect.value;
     
+    document.getElementById('edit-payload-media').style.display = 'none';
+    document.getElementById('edit-payload-kde').style.display = 'none';
+    
     if (type === 'volume_slider' || type === 'brightness_slider') {
         payloadGroup.style.display = 'none';
         return;
     }
     
-    if (action === 'audio_volume' || action === 'brightness' || action === 'audio_mute_toggle') {
+    if (action === 'audio_volume' || action === 'brightness' || action === 'audio_mute_toggle' || action === 'clock_widget') {
         payloadGroup.style.display = 'none';
     } else {
         payloadGroup.style.display = 'block';
@@ -535,6 +554,16 @@ function updatePayloadVisibility() {
                 appSearchContainer.style.display = 'block';
                 editPayloadCustom.style.display = 'none';
             }
+        } else if (action === 'mpris_action') {
+            document.getElementById('custom-payload-toggle').parentElement.style.display = 'none';
+            appSearchContainer.style.display = 'none';
+            editPayloadCustom.style.display = 'none';
+            document.getElementById('edit-payload-media').style.display = 'block';
+        } else if (action === 'kde_action') {
+            document.getElementById('custom-payload-toggle').parentElement.style.display = 'none';
+            appSearchContainer.style.display = 'none';
+            editPayloadCustom.style.display = 'none';
+            document.getElementById('edit-payload-kde').style.display = 'block';
         } else {
             // For URLs or custom KDE actions, always show plain text box
             document.getElementById('custom-payload-toggle').parentElement.style.display = 'none';
@@ -543,10 +572,6 @@ function updatePayloadVisibility() {
             
             if (action === 'open_url') {
                 editPayloadCustom.placeholder = "https://www.youtube.com";
-            } else if (action === 'mpris_action') {
-                editPayloadCustom.placeholder = "play_pause, next, previous";
-            } else if (action === 'kde_action') {
-                editPayloadCustom.placeholder = "qdbus org.kde.ksmserver ...";
             } else {
                 editPayloadCustom.placeholder = "Custom payload string";
             }
@@ -589,6 +614,7 @@ function renderAppSearchDropdown(query = '') {
                 appSearchInput.value = app.name;
                 editPayloadApp.value = app.payload;
                 document.getElementById('edit-icon').value = app.icon || 'apps';
+                document.getElementById('edit-system-icon-path').value = app.system_icon_path || '';
                 document.getElementById('edit-title').value = app.name;
                 appSearchResults.classList.remove('show');
             };
@@ -602,6 +628,40 @@ function renderAppSearchDropdown(query = '') {
         appSearchResults.classList.add('show');
     }
 }
+
+// Image Upload Logic
+const imageUploadInput = document.getElementById('edit-image-upload');
+const iconBase64Input = document.getElementById('edit-icon-base64');
+const imagePreviewContainer = document.getElementById('image-preview-container');
+const imagePreview = document.getElementById('image-preview');
+const btnRemoveImage = document.getElementById('btn-remove-image');
+
+imageUploadInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (file.size > 5 * 1024 * 1024) { // 5MB limit
+        alert("File is too large! Please select an image under 5MB to prevent syncing lag.");
+        imageUploadInput.value = '';
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const base64Str = event.target.result;
+        iconBase64Input.value = base64Str;
+        imagePreview.src = base64Str;
+        imagePreviewContainer.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+});
+
+btnRemoveImage.addEventListener('click', () => {
+    iconBase64Input.value = '';
+    imagePreview.src = '';
+    imagePreviewContainer.style.display = 'none';
+    imageUploadInput.value = '';
+});
 
 appSearchInput.addEventListener('keydown', (e) => {
     if (!appSearchResults.classList.contains('show')) return;
@@ -715,6 +775,13 @@ function openEditor(idx, dropX = null, dropY = null) {
         editPayloadApp.value = payloadStr;
         appSearchInput.value = payloadStr;
         
+        // Set dropdowns if applicable
+        if (item.action === 'mpris_action') {
+            document.getElementById('edit-payload-media').value = payloadStr;
+        } else if (item.action === 'kde_action') {
+            document.getElementById('edit-payload-kde').value = payloadStr;
+        }
+        
         // Only set to true if apps are loaded and it's genuinely not in the list.
         // If systemApps is empty, default to false and let the onmessage handler fix it later.
         if (systemApps.length > 0) {
@@ -724,6 +791,18 @@ function openEditor(idx, dropX = null, dropY = null) {
         }
         
         document.getElementById('edit-icon').value = item.icon || '';
+        document.getElementById('edit-system-icon-path').value = item.system_icon_path || '';
+        
+        if (item.icon_base64) {
+            iconBase64Input.value = item.icon_base64;
+            imagePreview.src = item.icon_base64;
+            imagePreviewContainer.style.display = 'block';
+        } else {
+            iconBase64Input.value = '';
+            imagePreview.src = '';
+            imagePreviewContainer.style.display = 'none';
+            imageUploadInput.value = '';
+        }
         
         const cols = item.span_cols || 1;
         const rows = item.span_rows || 1;
@@ -754,6 +833,12 @@ function openEditor(idx, dropX = null, dropY = null) {
         spanSelect.value = '1x1';
         actionSelect.value = 'launch_app';
         customPayloadToggle.checked = false;
+        
+        iconBase64Input.value = '';
+        document.getElementById('edit-system-icon-path').value = '';
+        imagePreview.src = '';
+        imagePreviewContainer.style.display = 'none';
+        imageUploadInput.value = '';
     }
     
     typeSelect.dispatchEvent(new Event('change'));
@@ -776,6 +861,10 @@ document.getElementById('editor-form').addEventListener('submit', (e) => {
     let payload = '';
     if (action === 'launch_app') {
         payload = customPayloadToggle.checked ? editPayloadCustom.value : editPayloadApp.value;
+    } else if (action === 'mpris_action') {
+        payload = document.getElementById('edit-payload-media').value;
+    } else if (action === 'kde_action') {
+        payload = document.getElementById('edit-payload-kde').value;
     } else {
         payload = editPayloadCustom.value;
     }
@@ -787,6 +876,8 @@ document.getElementById('editor-form').addEventListener('submit', (e) => {
         action: action,
         payload: payload,
         icon: document.getElementById('edit-icon').value,
+        icon_base64: iconBase64Input.value || null,
+        system_icon_path: document.getElementById('edit-system-icon-path').value || null,
         span_cols: parseInt(document.getElementById('edit-span-cols').value) || 1,
         span_rows: parseInt(document.getElementById('edit-span-rows').value) || 1
     };
@@ -798,8 +889,13 @@ document.getElementById('editor-form').addEventListener('submit', (e) => {
 
     if (idx === '') {
         if (defaultDropX !== null && defaultDropY !== null) {
-            newItem.grid_x = defaultDropX;
-            newItem.grid_y = defaultDropY;
+            if (canFit(defaultDropY, defaultDropX, newItem.span_rows, newItem.span_cols, -1)) {
+                newItem.grid_x = defaultDropX;
+                newItem.grid_y = defaultDropY;
+            } else {
+                alert("The new size cannot fit in the selected spot! Please choose a smaller size or drag it into an empty space later.");
+                return;
+            }
         } else {
             // Find empty space
             let placed = false;

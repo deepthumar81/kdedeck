@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'dynamic_matrix_grid.dart';
 import 'package:provider/provider.dart';
 import '../services/websocket_service.dart';
@@ -334,27 +336,102 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
             },
             child: Padding(
               padding: const EdgeInsets.all(4),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(_getIconData(item['icon']), size: isMultiSpan ? 28 : 20, color: accentBlue),
-                  const SizedBox(height: 3),
-                  Text(
-                    item['title'] ?? 'Button',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: isMultiSpan ? 11 : 9,
-                      fontWeight: FontWeight.w800,
-                      color: textPrimary,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
+              child: _buildTileContent(ws, item, isMultiSpan, spanCols),
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildTileContent(WebSocketService ws, Map<String, dynamic> item, bool isMultiSpan, int spanCols) {
+    if (item['action'] == 'clock_widget') {
+      return StreamBuilder(
+        stream: Stream.periodic(const Duration(seconds: 1)),
+        builder: (context, snapshot) {
+          final now = DateTime.now();
+          final timeStr = "${now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour)}:${now.minute.toString().padLeft(2, '0')} ${now.hour >= 12 ? 'PM' : 'AM'}";
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              return Center(
+                child: SizedBox(
+                  width: constraints.maxWidth * 0.9,
+                  height: constraints.maxHeight * 0.5,
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: Text(
+                      timeStr,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: accentBlue,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    }
+
+    Widget graphic;
+    if (item['icon_base64'] != null) {
+      try {
+        final b64Str = item['icon_base64'].toString();
+        final commaIdx = b64Str.indexOf(',');
+        final cleanStr = commaIdx != -1 ? b64Str.substring(commaIdx + 1) : b64Str;
+        final noWhitespace = cleanStr.replaceAll(RegExp(r'\s+'), '');
+        graphic = FractionallySizedBox(
+          widthFactor: 0.7,
+          heightFactor: 0.7,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16.0),
+            child: Image.memory(base64Decode(noWhitespace), fit: BoxFit.contain),
+          ),
+        );
+      } catch (e) {
+        graphic = Icon(_getIconData(item['icon']), size: isMultiSpan ? 28 : 20, color: accentBlue);
+      }
+    } else if (item['system_icon_path'] != null) {
+      final url = "http://${ws.serverIp}:${ws.serverPort}/system_icons?path=${Uri.encodeComponent(item['system_icon_path'])}";
+      final isSvg = item['system_icon_path'].toString().toLowerCase().endsWith('.svg');
+      
+      graphic = FractionallySizedBox(
+        widthFactor: 0.7,
+        heightFactor: 0.7,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16.0),
+          child: isSvg 
+              ? SvgPicture.network(url, fit: BoxFit.contain, placeholderBuilder: (_) => Icon(Icons.downloading, color: accentBlue))
+              : Image.network(url, fit: BoxFit.contain, errorBuilder: (_,__,___) => Icon(Icons.broken_image, color: accentBlue)),
+        ),
+      );
+    } else {
+      graphic = Icon(_getIconData(item['icon']), size: isMultiSpan ? 28 : 20, color: accentBlue);
+    }
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Center(child: graphic),
+        ),
+        if (item['title'] != null && item['title'].toString().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2.0),
+            child: Text(
+              item['title'],
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: isMultiSpan ? 11 : 9,
+                fontWeight: FontWeight.w800,
+                color: textPrimary,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
       ],
     );
   }

@@ -15,7 +15,6 @@ void main() async {
 
   // Enable Screen WakeLock on Mobile devices
   if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
-    await WakelockPlus.enable();
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   } else if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
     await windowManager.ensureInitialized();

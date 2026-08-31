@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 class WebSocketService extends ChangeNotifier {
   WebSocketChannel? _channel;
@@ -136,6 +137,9 @@ class WebSocketService extends ChangeNotifier {
       await _channel!.ready;
       isConnected = true;
       _isConnecting = false;
+      if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS)) {
+        WakelockPlus.enable();
+      }
       notifyListeners();
 
       _channel!.stream.listen(
@@ -160,6 +164,9 @@ class WebSocketService extends ChangeNotifier {
     _isConnecting = false;
     if (isConnected) {
       isConnected = false;
+      if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS)) {
+        WakelockPlus.disable();
+      }
       notifyListeners();
     }
 

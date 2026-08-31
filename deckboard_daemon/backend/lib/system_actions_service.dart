@@ -1,7 +1,27 @@
 import 'dart:io';
+import 'dart:convert';
 
 class SystemActionsService {
   static String? _cachedDisplayOutput;
+  static Map<String, String>? _iconCache;
+
+  static void _scanDirForIcons(Directory dir, Map<String, String> map) {
+    try {
+      final entities = dir.listSync(followLinks: true);
+      for (var entity in entities) {
+        if (entity is File) {
+          final ext = entity.path.split('.').last.toLowerCase();
+          if (ext == 'png' || ext == 'svg' || ext == 'xpm') {
+            final filename = entity.path.split('/').last;
+            final name = filename.substring(0, filename.lastIndexOf('.'));
+            map[name] = entity.path;
+          }
+        } else if (entity is Directory) {
+          _scanDirForIcons(entity, map);
+        }
+      }
+    } catch (_) {}
+  }
 
   static Future<String> _getDisplayOutput() async {
     if (_cachedDisplayOutput != null) return _cachedDisplayOutput!;
@@ -115,8 +135,49 @@ class SystemActionsService {
   static Future<void> executeMpris(String payload) async {
     if (payload.isEmpty) return;
     try {
+      if (payload == 'volume_up') {
+        if (Platform.isLinux) {
+          await Process.run('pactl', ['set-sink-volume', '@DEFAULT_SINK@', '+5%']);
+          await Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', '5%+']);
+        }
+        return;
+      }
+      if (payload == 'volume_down') {
+        if (Platform.isLinux) {
+          await Process.run('pactl', ['set-sink-volume', '@DEFAULT_SINK@', '-5%']);
+          await Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', '5%-']);
+        }
+        return;
+      }
+      if (payload == 'mute') {
+        await toggleMute();
+        return;
+      }
+
       if (Platform.isLinux) {
-        await Process.run('playerctl', [payload]);
+        final dbusRes = await Process.run('dbus-send', ['--print-reply', '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus.ListNames']);
+        if (dbusRes.exitCode == 0) {
+          final out = dbusRes.stdout as String;
+          final lines = out.split('\n');
+          final mprisNames = lines.where((l) => l.contains('org.mpris.MediaPlayer2.')).map((l) {
+            final parts = l.split('"');
+            return parts.length > 1 ? parts[1] : '';
+          }).where((n) => n.isNotEmpty).toList();
+          
+          String method = '';
+          if (payload == 'play-pause' || payload == 'play_pause') method = 'PlayPause';
+          else if (payload == 'next') method = 'Next';
+          else if (payload == 'previous') method = 'Previous';
+          else if (payload == 'stop') method = 'Stop';
+          else if (payload == 'play') method = 'Play';
+          else if (payload == 'pause') method = 'Pause';
+
+          if (method.isNotEmpty) {
+            for (var mpris in mprisNames) {
+              await Process.run('dbus-send', ['--print-reply', '--dest=$mpris', '/org/mpris/MediaPlayer2', 'org.mpris.MediaPlayer2.Player.$method']);
+            }
+          }
+        }
       } else if (Platform.isWindows) {
         // TODO: Implement Windows media keys
       } else if (Platform.isMacOS) {
@@ -127,13 +188,37 @@ class SystemActionsService {
     }
   }
 
+  static Future<void> executeKdeAction(String payload) async {
+    if (payload.isEmpty) return;
+    try {
+      if (Platform.isLinux) {
+        if (payload == 'sleep') {
+          await Process.run('systemctl', ['suspend']);
+        } else if (payload == 'shutdown') {
+          await Process.run('systemctl', ['poweroff']);
+        } else if (payload == 'lock') {
+          await Process.run('qdbus', ['org.kde.ksmserver', '/ScreenSaver', 'Lock']);
+        } else if (payload == 'logout') {
+          await Process.run('qdbus', ['org.kde.ksmserver', '/KSMServer', 'logout', '0', '0', '0']);
+        } else {
+          // Custom qdbus or arbitrary command
+          await Process.run('sh', ['-c', payload]);
+        }
+      }
+    } catch (e) {
+      print("❌ [SystemActionsService] KDE Action error: $e");
+    }
+  }
+
   static Future<List<Map<String, String>>> getInstalledApps() async {
     List<Map<String, String>> apps = [];
+    Set<String> allIconNames = {};
     if (Platform.isLinux) {
       // Find Desktop entries
       final paths = [
         '/usr/share/applications',
-        '${Platform.environment['HOME']}/.local/share/applications'
+        '${Platform.environment['HOME']}/.local/share/applications',
+        '/var/lib/flatpak/exports/share/applications'
       ];
       
       for (var path in paths) {
@@ -159,6 +244,7 @@ class SystemActionsService {
                 }
                 if (name != null && exec != null) {
                   apps.add({'name': name, 'payload': exec, 'icon': icon ?? 'apps'});
+                  if (icon != null && icon.isNotEmpty) allIconNames.add(icon);
                 }
               } catch (_) {}
             }
@@ -166,19 +252,7 @@ class SystemActionsService {
         }
       }
       
-      // Flatpaks
-      try {
-        final res = await Process.run('flatpak', ['list', '--app', '--columns=name,application']);
-        if (res.exitCode == 0) {
-          final lines = (res.stdout as String).split('\n');
-          for (var line in lines) {
-            final parts = line.split('\t');
-            if (parts.length >= 2) {
-              apps.add({'name': parts[0].trim(), 'payload': 'flatpak run ${parts[1].trim()}', 'icon': 'apps'});
-            }
-          }
-        }
-      } catch (_) {}
+      // Flatpaks are already handled by parsing /var/lib/flatpak/exports/share/applications
       
       // Snaps
       try {
@@ -203,6 +277,46 @@ class SystemActionsService {
     apps.sort((a, b) => a['name']!.compareTo(b['name']!));
     final seen = <String>{};
     apps.retainWhere((app) => seen.add(app['payload']!));
+    
+    // Resolve icons natively
+    if (Platform.isLinux && allIconNames.isNotEmpty) {
+      if (_iconCache == null) {
+        final sw = Stopwatch()..start();
+        _iconCache = {};
+        final paths = [
+          '/usr/share/icons',
+          '/usr/share/pixmaps',
+          '${Platform.environment['HOME']}/.local/share/icons',
+          '/var/lib/flatpak/exports/share/icons'
+        ];
+        for (var path in paths) {
+          final dir = Directory(path);
+          if (dir.existsSync()) {
+            _scanDirForIcons(dir, _iconCache!);
+          }
+        }
+        print("✅ [SystemActionsService] Indexed ${_iconCache!.length} icons in ${sw.elapsedMilliseconds}ms");
+      }
+
+      for (var app in apps) {
+        final iconName = app['icon'];
+        if (iconName != null) {
+          if (iconName.startsWith('/')) {
+            app['system_icon_path'] = iconName;
+          } else if (_iconCache!.containsKey(iconName)) {
+            app['system_icon_path'] = _iconCache![iconName]!;
+          } else {
+            // Also try matching case-insensitive partial substring
+            final iconNameLower = iconName.toLowerCase();
+            final match = _iconCache!.keys.firstWhere((k) {
+              final kLower = k.toLowerCase();
+              return kLower == iconNameLower || kLower.contains(iconNameLower) || (iconNameLower.contains(kLower) && kLower.length > 3);
+            }, orElse: () => '');
+            if (match.isNotEmpty) app['system_icon_path'] = _iconCache![match]!;
+          }
+        }
+      }
+    }
     
     return apps;
   }

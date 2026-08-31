@@ -64,6 +64,27 @@ class DartServerService {
           } catch (e) {
             print("WS Upgrade Error: $e");
           }
+        } else if (request.uri.path == '/system_icons' || request.uri.path == '/system_icons/') {
+          try {
+            final iconPath = request.uri.queryParameters['path'];
+            if (iconPath != null && iconPath.isNotEmpty) {
+              final file = File(iconPath);
+              if (await file.exists()) {
+                final ext = iconPath.split('.').last.toLowerCase();
+                var contentType = 'image/png';
+                if (ext == 'svg') contentType = 'image/svg+xml';
+                else if (ext == 'xpm') contentType = 'image/x-xpixmap';
+                
+                request.response.headers.contentType = ContentType.parse(contentType);
+                request.response.headers.add('Cache-Control', 'max-age=86400');
+                await file.openRead().pipe(request.response);
+                return;
+              }
+            }
+            request.response..statusCode = HttpStatus.notFound..close();
+          } catch (e) {
+            request.response..statusCode = HttpStatus.internalServerError..close();
+          }
         } else {
           try {
             final uri = request.uri.path == '/' ? '/index.html' : request.uri.path;
@@ -278,7 +299,7 @@ class DartServerService {
         break;
 
       case 'kde_action':
-        await SystemActionsService.executeLaunch(payload);
+        await SystemActionsService.executeKdeAction(payload);
         break;
     }
   }

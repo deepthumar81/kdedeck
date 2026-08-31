@@ -131,6 +131,7 @@
                         <option value="audio_mute_toggle">Toggle Audio Mute</option>
                         <option value="mpris_action">Media Control</option>
                         <option value="kde_action">KDE System Action</option>
+                        <option value="clock_widget">Dynamic Clock Widget</option>
                     </select>
                 </div>
                 
@@ -151,11 +152,38 @@
 
                     <!-- Custom Payload Textbox -->
                     <input type="text" id="edit-payload-custom" style="display: none;" placeholder="e.g. flatpak run org.kde.discover">
+                    
+                    <!-- Predefined Dropdowns for Media / KDE -->
+                    <select id="edit-payload-media" style="display: none;">
+                        <option value="play-pause">Play / Pause</option>
+                        <option value="next">Next Track</option>
+                        <option value="previous">Previous Track</option>
+                        <option value="volume_up">Volume Up</option>
+                        <option value="volume_down">Volume Down</option>
+                        <option value="mute">Toggle Mute</option>
+                    </select>
+
+                    <select id="edit-payload-kde" style="display: none;">
+                        <option value="sleep">Sleep / Suspend</option>
+                        <option value="shutdown">Shutdown</option>
+                        <option value="lock">Lock Screen</option>
+                        <option value="logout">Logout</option>
+                    </select>
                 </div>
                 
                 <div class="form-group" id="icon-group">
                     <label>Icon Name (Material Symbols)</label>
                     <input type="text" id="edit-icon" placeholder="e.g. terminal, language, volume_up">
+                    
+                    <label style="margin-top: 10px; display: block;">Or Upload Custom Image / GIF</label>
+                    <input type="file" id="edit-image-upload" accept="image/png, image/jpeg, image/gif, image/svg+xml" style="width: 100%; margin-top: 5px;">
+                    <input type="hidden" id="edit-icon-base64">
+                    <input type="hidden" id="edit-system-icon-path">
+                    
+                    <div id="image-preview-container" style="display: none; margin-top: 10px; text-align: center;">
+                        <img id="image-preview" src="" style="max-width: 100px; max-height: 100px; border-radius: 10px;">
+                        <button type="button" id="btn-remove-image" class="btn-danger" style="display: block; margin: 5px auto 0; font-size: 0.8rem; padding: 4px 8px;">Remove Custom Image</button>
+                    </div>
                 </div>
                 
                 <div class="modal-actions">
