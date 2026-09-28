@@ -1,66 +1,97 @@
-# KdeDeck 🚀
+# KDE Deck
 
-**KdeDeck** is a ultra-lightweight, open-source Stream Deck / Macro Pad server and Progressive Web App (PWA) designed specifically for **Linux (KDE Plasma 6 on Wayland & X11)**.
+**Turn an old Android phone into a Stream Deck for Linux. ₹0.**
 
-Built as a high-performance alternative to Electron-based macro pads, **KdeDeck consumes ~14MB of RAM** (compared to 400MB+ in traditional Electron apps) while offering deep integration with KDE Plasma, Wayland, MPRIS D-Bus, and KDE Connect.
+KDE Deck is an open-source macro pad / deck controller for **Linux (KDE Plasma 6, Wayland & X11)**. Instead of paying Elgato money, you run a lightweight server on your PC and drive it from your phone: launch apps, control media, slide volume and brightness, ring your phone, manage windows — a full remote for your Linux box, built from scratch.
 
----
+![Demo video](assets/demo.mp4)
 
-## Features ✨
-
-* 📱 **PWA Mobile Support**: No APK installation needed! Open `http://<YOUR_PC_IP>:8484` on your Android or iOS device, tap **"Add to Home Screen"**, and launch as a fullscreen app with low-latency touch controls and vibration haptics (`navigator.vibrate`).
-* 👈👉 **Multi-Board Swipe Navigation**: Create unlimited boards (e.g., *System & Audio*, *Media & Browser*, *KDE Connect*, *Active Taskbar*). Swipe left/right on your phone screen to switch between boards.
-* ⚡ **Ultra-Low Memory Footprint**: Runs on a Python asynchronous backend (`aiohttp`) consuming **~14MB RAM** in the background.
-* 🎚️ **Interactive Touch Sliders**: Smooth real-time touch sliders for per-monitor brightness (`ddcutil` / `brightnessctl`) and system/application sound volume (`pactl`).
-* 🖼️ **Live KWin Taskbar Switcher**: Dynamic board page that streams running KDE application windows in real time. Tapping an app tile focuses that window instantly on Wayland.
-* 📲 **KDE Connect Integration**: Native deck actions to find/ring your phone 🔔, check battery status 🔋, and sync clipboard 📋.
-* 🎵 **MPRIS Media Controls**: Play, pause, skip tracks, and display metadata for Spotify, VLC, Firefox, Chrome, etc.
-* 🎨 **Rich UI & Themes**: Glassmorphism design with preset themes (*KDE Breeze Dark*, *Cyberpunk Neon*, *OLED Black*, *Sunset Gradient*) and 1,000+ vector icons.
-* 🛠️ **Visual Board Editor**: Customize buttons, icons, colors, actions, and layouts directly from your PC browser.
+*One tap on the phone opens YouTube on the monitor, media buttons drive playback and volume, and the last tap opens system settings.*
 
 ---
 
-## Quick Start 🛠️
+## Screenshots
 
-### 1. Start KdeDeck Server
+| Phone deck | Board configurator | Volume & brightness sliders |
+|---|---|---|
+| ![KDE Deck phone app](assets/app-board.png) | ![Deckboard Configurator](assets/configurator.png) | ![Touch sliders](assets/sliders.png) |
+
+---
+
+## Features
+
+- 📱 **Two clients, your choice** — a native **Flutter Android app** with a connection manager, or a **Progressive Web App**: open `http://<YOUR_PC_IP>:8484` on any phone, tap "Add to Home Screen", done.
+- 🖼️ **Real app icons, zero setup** — a universal Linux app scanner reads your installed apps (deb/APT, Flatpak, Snap desktop entries) and the server renders their actual system icons. No manual icon hunting, no broken images.
+- 👈👉 **Multi-board swipe navigation** — unlimited boards (System & Audio, Media & Browser, KDE Connect…), swipe between them on the phone.
+- 🎚️ **Touch sliders** — per-monitor brightness and system/app volume with real-time feedback.
+- 🪟 **Live KWin taskbar** — streams your running KDE windows; tap a tile to focus it instantly on Wayland.
+- 📲 **KDE Connect actions** — find/ring your phone, battery status, clipboard sync.
+- 🎵 **MPRIS media controls** — play, pause, skip, and metadata for Spotify, VLC, browsers, everything MPRIS-speaking.
+- 🛠️ **Visual board configurator** — design buttons, icons, sliders, and layouts from your PC browser; changes sync to the phone live.
+- 🔐 **PIN authorization** — 4-digit PIN + session tokens so only your devices can drive your PC.
+- ⚡ **Lightweight** — the Python backend idles at ~14MB RAM. No Electron, no bloat.
+- 🎨 **Themes** — Breeze Dark, Cyberpunk Neon, OLED Black, Sunset Gradient, and more.
+
+---
+
+## How it's built
+
+```
+kdedeck/
+├── server/            # Python asyncio backend (aiohttp + WebSockets)
+│   ├── main.py        # Web & WebSocket server
+│   ├── app_scanner.py # Scans deb / Flatpak / Snap desktop entries
+│   ├── config_manager.py
+│   └── plugins/       # Action handlers: audio, brightness, D-Bus,
+│                      # KWin, MPRIS media, KDE Connect
+├── web/               # Progressive Web App client
+├── pc_gui/            # Visual board configurator (configurator.py)
+├── cli/               # Service management (kdedeck start/status/…)
+kdedeck_mobile/        # Native Flutter Android app
+│   └── lib/           # WebSocket client, connection manager, board UI
+deckboard_daemon/      # Headless Dart WebSocket backend + tray
+```
+
+Three ways to drive your PC, one protocol: the Python server is the brain (plugins do the real work over D-Bus, PulseAudio/PipeWire, and KWin scripting), the Flutter app and the PWA are the hands, and the configurator is where you lay out the buttons.
+
+---
+
+## Quick start
+
+### 1. Start the server
+
 ```bash
 ./kdedeck/cli/kdedeck start
 ```
 
-### 2. Check Status & Memory Usage
+### 2. Check status
+
 ```bash
 ./kdedeck/cli/kdedeck status
 ```
 
-### 3. Open Deck on Mobile Device
-Open `http://<YOUR_PC_IP>:8484` in Chrome or Firefox on your phone, then tap **"Add to Home Screen"**.
+### 3. Open the deck on your phone
 
-### 4. Enable Launch on KDE Boot (Autostart)
+Open `http://<YOUR_PC_IP>:8484` in Chrome/Firefox and tap **"Add to Home Screen"** — or install the Flutter app from `kdedeck_mobile/`.
+
+### 4. Design your boards
+
+Open `http://localhost:8484` on your PC for the visual configurator, then arrange buttons however you like. Changes appear on the phone instantly.
+
+### 5. Launch on boot (optional)
+
 ```bash
 ./kdedeck/cli/kdedeck enable-autostart
 ```
 
 ---
 
-## Project Architecture
+## Roadmap
 
-```
-kdedeck/
-├── server/               # Asynchronous Python Backend (~14MB RAM)
-│   ├── main.py           # Web & WebSocket Server
-│   ├── config_manager.py # JSON Configuration & Multi-Board Storage
-│   └── plugins/          # Action Handlers (PulseAudio, D-Bus, KWin, MPRIS, KDE Connect)
-├── web/                  # Progressive Web App (PWA)
-│   ├── index.html        # Mobile & Desktop Single Page App
-│   ├── css/style.css     # Glassmorphism & Theme Engine
-│   ├── js/app.js         # WebSocket, Touch Swipe & Editor Logic
-│   └── js/icons.js       # Vector Icon Dataset
-└── cli/
-    └── kdedeck           # CLI Service Management Script
-```
+See [ROADMAP.md](ROADMAP.md) for what's planned and what's deliberately cut (e.g. why `ddcutil` I2C polling was removed).
 
 ---
 
-## License 📜
+## License
 
-Distributed under the MIT License.
+MIT — do whatever you want with it.
