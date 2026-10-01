@@ -1,17 +1,22 @@
 # KDE Deck 🚀
 
-**KDE Deck** is an ultra-lightweight, native, open-source Stream Deck / Macro Pad system designed to control your computer from your Android phone or Web browser. 
+**Turn an old Android phone into a Stream Deck for Linux. $0.**
 
-Currently optimized for Linux (KDE Plasma), the core architecture relies on **Dart** and **Flutter**, making it primed for future native cross-platform support on Windows and macOS.
+KDE Deck is an open-source macro pad / deck controller for **Linux (KDE Plasma 6, Wayland & X11)**. Instead of paying Elgato money, you run a lightweight server on your PC and drive it from your phone: launch apps, control media, slide volume and brightness, ring your phone, manage windows — a full remote for your Linux box, built from scratch.
+
+![Demo video](assets/demo.mp4)
+
+*One tap on the phone opens YouTube on the monitor, media buttons drive playback and volume, and the last tap opens system settings.*
 
 ---
 
 ## 📸 Screenshots & Media
 
-<p align="center">
-  <img src="kdedeck_mobile/Screenshot_20260928_140428.png" width="30%" />
-  <img src="kdedeck_mobile/Screenshot_20260928-140531.png" width="30%" />
-</p>
+| Phone deck | Board configurator | Volume & brightness sliders |
+|---|---|---|
+| ![KDE Deck phone app](assets/app-board.png) | ![Deckboard Configurator](assets/configurator.png) | ![Touch sliders](assets/sliders.png) |
+
+---
 
 ## 🏗️ Architecture & Technologies
 
