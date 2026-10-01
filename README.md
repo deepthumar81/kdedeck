@@ -1,66 +1,73 @@
-# KdeDeck 🚀
+# KDE Deck 🚀
 
-**KdeDeck** is a ultra-lightweight, open-source Stream Deck / Macro Pad server and Progressive Web App (PWA) designed specifically for **Linux (KDE Plasma 6 on Wayland & X11)**.
+**KDE Deck** is an ultra-lightweight, native, open-source Stream Deck / Macro Pad system designed to control your computer from your Android phone or Web browser. 
 
-Built as a high-performance alternative to Electron-based macro pads, **KdeDeck consumes ~14MB of RAM** (compared to 400MB+ in traditional Electron apps) while offering deep integration with KDE Plasma, Wayland, MPRIS D-Bus, and KDE Connect.
-
----
-
-## Features ✨
-
-* 📱 **PWA Mobile Support**: No APK installation needed! Open `http://<YOUR_PC_IP>:8484` on your Android or iOS device, tap **"Add to Home Screen"**, and launch as a fullscreen app with low-latency touch controls and vibration haptics (`navigator.vibrate`).
-* 👈👉 **Multi-Board Swipe Navigation**: Create unlimited boards (e.g., *System & Audio*, *Media & Browser*, *KDE Connect*, *Active Taskbar*). Swipe left/right on your phone screen to switch between boards.
-* ⚡ **Ultra-Low Memory Footprint**: Runs on a Python asynchronous backend (`aiohttp`) consuming **~14MB RAM** in the background.
-* 🎚️ **Interactive Touch Sliders**: Smooth real-time touch sliders for per-monitor brightness (`ddcutil` / `brightnessctl`) and system/application sound volume (`pactl`).
-* 🖼️ **Live KWin Taskbar Switcher**: Dynamic board page that streams running KDE application windows in real time. Tapping an app tile focuses that window instantly on Wayland.
-* 📲 **KDE Connect Integration**: Native deck actions to find/ring your phone 🔔, check battery status 🔋, and sync clipboard 📋.
-* 🎵 **MPRIS Media Controls**: Play, pause, skip tracks, and display metadata for Spotify, VLC, Firefox, Chrome, etc.
-* 🎨 **Rich UI & Themes**: Glassmorphism design with preset themes (*KDE Breeze Dark*, *Cyberpunk Neon*, *OLED Black*, *Sunset Gradient*) and 1,000+ vector icons.
-* 🛠️ **Visual Board Editor**: Customize buttons, icons, colors, actions, and layouts directly from your PC browser.
+Currently optimized for Linux (KDE Plasma), the core architecture relies on **Dart** and **Flutter**, making it primed for future native cross-platform support on Windows and macOS.
 
 ---
 
-## Quick Start 🛠️
+## 📸 Screenshots & Media
 
-### 1. Start KdeDeck Server
-```bash
-./kdedeck/cli/kdedeck start
-```
+<p align="center">
+  <img src="kdedeck_mobile/Screenshot_20260928_140428.png" width="30%" />
+  <img src="kdedeck_mobile/Screenshot_20260928-140531.png" width="30%" />
+</p>
 
-### 2. Check Status & Memory Usage
-```bash
-./kdedeck/cli/kdedeck status
-```
+## 🏗️ Architecture & Technologies
 
-### 3. Open Deck on Mobile Device
-Open `http://<YOUR_PC_IP>:8484` in Chrome or Firefox on your phone, then tap **"Add to Home Screen"**.
+We recently migrated from a Python prototype to a highly robust **Dart and Flutter** ecosystem to ensure zero-latency WebSockets, beautiful UI animations, and native system integration without forcing users to install bulky runtime environments (like Node.js or Python virtual environments).
 
-### 4. Enable Launch on KDE Boot (Autostart)
-```bash
-./kdedeck/cli/kdedeck enable-autostart
-```
+* **Backend Daemon:** Written in pure Dart. It compiles into a single, standalone AOT executable (`kdedeck_daemon`) with an incredibly small memory footprint. It natively manages D-Bus MPRIS controls and parses system/Flatpak `.desktop` application icons.
+* **Frontend Mobile App:** A stunning **Neumorphic** Android application built with Flutter. It connects to the daemon via WebSockets and updates button matrix grids instantly.
+* **Frontend Web App:** The daemon also hosts a Web UI at `http://localhost:8484` for dragging and dropping configurations directly on your PC.
 
 ---
 
-## Project Architecture
+## ⚡ Installation (For New Users)
 
-```
-kdedeck/
-├── server/               # Asynchronous Python Backend (~14MB RAM)
-│   ├── main.py           # Web & WebSocket Server
-│   ├── config_manager.py # JSON Configuration & Multi-Board Storage
-│   └── plugins/          # Action Handlers (PulseAudio, D-Bus, KWin, MPRIS, KDE Connect)
-├── web/                  # Progressive Web App (PWA)
-│   ├── index.html        # Mobile & Desktop Single Page App
-│   ├── css/style.css     # Glassmorphism & Theme Engine
-│   ├── js/app.js         # WebSocket, Touch Swipe & Editor Logic
-│   └── js/icons.js       # Vector Icon Dataset
-└── cli/
-    └── kdedeck           # CLI Service Management Script
-```
+**You do NOT need to install Dart, Flutter, Python, or any heavy SDKs to use KDE Deck.** 
+We provide fully compiled, standalone binaries.
+
+### 1. The Linux Backend
+1. Download the compiled `kdedeck_daemon` executable.
+2. Run it via your terminal or double-click it.
+   ```bash
+   ./kdedeck_daemon
+   ```
+3. The server will start silently on port `8484`.
+
+### 2. The Android Frontend
+1. Download the `app-release.apk` file to your Android phone.
+2. Install the APK.
+3. Open the app, slide open the menu, and enter your PC's IP address (e.g., `192.168.1.50`).
+
+### 3. The Web Configurator
+1. On your PC, open a web browser.
+2. Navigate to `http://localhost:8484`.
+3. Use the Drag & Drop interface to customize your button grid!
 
 ---
+
+## 🌍 Cross-Platform Roadmap (Windows & macOS)
+
+Are we bringing this to Windows and Mac? **Yes!** Our architecture is perfectly suited for it.
+
+Because we built the mobile app in Flutter, the frontend is already 100% cross-platform compatible with iOS and Android. Because we built the backend in Dart, the server logic compiles natively into `.exe` (Windows) and Mach-O (macOS) binaries.
+
+Currently, the backend's `SystemActionsService` uses Linux-specific commands (like `dbus-send` and parsing `/usr/share/applications`). In the near future, we will simply inject platform-specific branches into this single service:
+* **Windows:** Parsing the Start Menu and hooking into the Windows Media API.
+* **macOS:** Hooking into AppleScript for media controls.
+
+The core server, UI, and WebSocket protocols will remain completely untouched!
+
+---
+
+## 🛠️ Building from Source
+
+If you want to contribute to the code:
+1. Ensure you have the Dart SDK and Flutter installed.
+2. **Backend:** `cd deckboard_daemon/backend && dart compile exe bin/backend.dart -o kdedeck_daemon`
+3. **Frontend:** `cd kdedeck_mobile && flutter build apk --release`
 
 ## License 📜
-
 Distributed under the MIT License.
