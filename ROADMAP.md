@@ -1,37 +1,36 @@
-# KdeDeck - Project Roadmap & Plan 🗺️
+# KDE Deck - Project Roadmap & Plan 🗺️
 
-**Current Version**: `v1.1.0`  
+**Current Version**: `v2.0.0` (Dart/Flutter Architecture)  
 **License**: MIT  
-**Target Platform**: Linux (KDE Plasma 6 on Wayland & X11)
+**Target Platform**: Linux (KDE Plasma on Wayland & X11)  
+*Future Platforms: Windows & macOS*
 
 ---
 
-## 🎯 Active Features List (v1.1.0)
+## 🎯 Active Features List (v2.0.0)
 
-* 📱 **PWA Mobile Experience**: Native "Add to Home Screen" support on Android & iOS with touch haptic feedback (`navigator.vibrate`).
-* 🎨 **iOS 18 & One UI 9 Aesthetics**: Squircle square button grid (`aspect-ratio: 1 / 1`), rectangle slider cards, smooth glassmorphism, vibrant theme modes (*Light*, *Breeze Dark*, *iOS 18 / One UI 9 Colorful*).
-* 👈👉 **Carousel & Multi-Board Swipe Navigation**: Unlimited deck pages. Supports touch swipe on phone, carousel `<` `>` buttons on desktop, mouse drag-swipe, and keyboard Left/Right arrow keys.
-* 💾 **Import & Export Settings**: 1-Click JSON export (`kdedeck-config.json`) and configuration import tool to easily migrate settings across computers.
-* ✏️ **Board Renaming & Management**: Full board renaming capability, "+ Button" addition, "+ Board" creation, and item deletion.
-* 📦 **Universal Linux App Scanner**: Scans Debian/APT (`/usr/share/applications`), Flatpak (`/var/lib/flatpak/exports`), and Snap (`/var/lib/snapd/desktop`) desktop entries.
-* 🖼️ **Native Desktop App Icons**: Exposes `/api/icon/<name>` endpoint to render high-resolution PNG/SVG icons directly from system icon themes.
-* 🔐 **Security PIN Authorization**: 4-Digit Security PIN (Default: `8484`) and session token verification.
-* 🪟 **Active KWin Taskbar Board**: Dynamic board page querying running windows on KDE Plasma 6 Wayland via KWin D-Bus scripting.
-* 🎵 **MPRIS & KDE Connect Integration**: Media controls (Spotify/VLC/Browser) and KDE Connect actions (Find Phone, Battery meter, Clipboard sync).
+* 📱 **Native Mobile Experience**: Android (and iOS-ready) Flutter app with Neumorphic UI, touch haptic feedback, and dynamic layout scaling.
+* ⚡ **Ultra-Low Memory Footprint**: Runs on a compiled Ahead-Of-Time (AOT) Dart daemon backend consuming extremely minimal RAM.
+* 👈👉 **Multi-Board Swipe Navigation**: Unlimited deck pages. Supports touch swipe on phone to switch between functional boards.
+* 📦 **Universal Linux App Scanner**: Scans Debian/APT (`/usr/share/applications`) and Flatpak (`/var/lib/flatpak/exports`) desktop entries natively.
+* 🖼️ **Native Desktop App Icons**: Directly parses and streams high-resolution PNG/SVG icons from Linux system icon themes.
+* 🎵 **MPRIS Integration**: Universal media controls (Spotify/VLC/Browser) natively executed via D-Bus (`org.mpris.MediaPlayer2`).
+* 🖥️ **Web UI Configurator**: Drag & drop configuration panel served over local HTTP on port `8484`.
 
 ---
 
 ## 🚫 Cancelled / Deprecated Features
 
+* ❌ **Python / aiohttp Backend**: 
+  - *Reason for Cancellation*: High memory usage and complex virtual environment management. Completely replaced by the standalone Dart daemon.
 * ❌ **`ddcutil` Hardware I2C Polling**: 
-  - *Reason for Cancellation*: `ddcutil` communicates synchronously over hardware I2C bus with external monitors, taking 500ms–2000ms per poll. This caused KDE Plasma GPU frame drops and system-wide lag every 5 seconds.
-  - *Replacement*: Brightness control now uses non-blocking `brightnessctl` and `/sys/class/backlight` without I2C polling overhead.
+  - *Reason for Cancellation*: Synchronous polling caused KDE Plasma GPU frame drops. Replaced with non-blocking local sysfs scaling.
 
 ---
 
-## 🔮 Upcoming Roadmap (v1.2.0+)
+## 🔮 Upcoming Roadmap (v2.1.0+)
 
-- [ ] **Custom Icon File Upload**: Upload local PNG/SVG icon images for custom buttons.
+- [ ] **Windows & macOS Port**: Implement `Platform.isWindows` and `Platform.isMacOS` OS bridges in `SystemActionsService.dart` to support Windows Start Menu / Media APIs and macOS AppleScript.
+- [ ] **Custom Icon File Upload**: Upload local PNG/SVG icon images for custom buttons via the Web UI.
 - [ ] **OBS Studio Scene Switcher Plugin**: Built-in OBS WebSocket plugin tab with live scene preview.
-- [ ] **System Hardware Monitoring Widget**: Real-time CPU, RAM, and GPU temperature touch tiles.
-- [ ] **Custom Hotkey Sequence Recording**: Record multi-key hotkey combos (e.g. `Ctrl + Alt + Shift + T`).
+- [ ] **System Hardware Monitoring**: Real-time CPU, RAM, and GPU temperature touch tiles pulling from native metrics.

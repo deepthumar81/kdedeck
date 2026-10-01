@@ -69,5 +69,14 @@ If you want to contribute to the code:
 2. **Backend:** `cd deckboard_daemon/backend && dart compile exe bin/backend.dart -o kdedeck_daemon`
 3. **Frontend:** `cd kdedeck_mobile && flutter build apk --release`
 
+---
+
+## 🌐 About & Website
+
+KDE Deck is rapidly evolving. We are planning to host a dedicated documentation and showcase website! 
+
+Because this repository is public, you can easily view our auto-generated project website hosted directly from this README via **GitHub Pages**. 
+*(To enable this on your fork: Go to GitHub Repository Settings -> Pages -> Build and deployment -> Source: Deploy from a branch -> Select `main`).*
+
 ## License 📜
 Distributed under the MIT License.

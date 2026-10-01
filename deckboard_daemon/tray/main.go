@@ -61,7 +61,16 @@ func startBackend() {
 	
 	backendDir := filepath.Join(dir, "..", "backend")
 	
-	backendCmd = exec.Command("dart", "run", "bin/backend.dart")
+	// Check if compiled binary exists
+	binaryPath := filepath.Join(backendDir, "kdedeck_daemon")
+	if _, err := os.Stat(binaryPath); err == nil {
+		fmt.Println("Found compiled binary, executing native daemon...")
+		backendCmd = exec.Command("./kdedeck_daemon")
+	} else {
+		fmt.Println("Compiled binary not found, falling back to Dart SDK...")
+		backendCmd = exec.Command("dart", "run", "bin/backend.dart")
+	}
+
 	backendCmd.Dir = backendDir
 	backendCmd.Stdout = os.Stdout
 	backendCmd.Stderr = os.Stderr
