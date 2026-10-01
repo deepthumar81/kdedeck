@@ -1,6 +1,6 @@
 # KDE Deck
 
-**Turn an old Android phone into a Stream Deck for Linux. ₹0.**
+**Turn an old Android phone into a Stream Deck for Linux. $0.**
 
 KDE Deck is an open-source macro pad / deck controller for **Linux (KDE Plasma 6, Wayland & X11)**. Instead of paying Elgato money, you run a lightweight server on your PC and drive it from your phone: launch apps, control media, slide volume and brightness, ring your phone, manage windows — a full remote for your Linux box, built from scratch.
 
