@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import 'app_discovery.dart';
 import 'system_actions_service.dart';
 
 class DartServerService {
@@ -19,6 +21,12 @@ class DartServerService {
   bool isMuted = false;
   Timer? _metricsTimer;
   String? _cachedDisplayOutput;
+
+  String? _resolveSystemIconPath(String requestedPath) {
+    if (!Platform.isLinux) return null;
+    return IconPathValidator(SystemActionsService.linuxIconRoots)
+        .resolve(requestedPath);
+  }
 
   Future<String> _getDisplayOutput() async {
     if (_cachedDisplayOutput != null) return _cachedDisplayOutput!;
@@ -55,7 +63,7 @@ class DartServerService {
       _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
       isRunning = true;
       print("🚀 [DartServerService] Running on port $port");
-      
+
       _server!.listen((HttpRequest request) async {
         if (request.uri.path == '/ws') {
           try {
@@ -64,30 +72,49 @@ class DartServerService {
           } catch (e) {
             print("WS Upgrade Error: $e");
           }
-        } else if (request.uri.path == '/system_icons' || request.uri.path == '/system_icons/') {
+        } else if (request.uri.path == '/system_icons' ||
+            request.uri.path == '/system_icons/') {
           try {
             final iconPath = request.uri.queryParameters['path'];
             if (iconPath != null && iconPath.isNotEmpty) {
-              final file = File(iconPath);
+              final resolvedPath = _resolveSystemIconPath(iconPath);
+              if (resolvedPath == null) {
+                request.response
+                  ..statusCode = HttpStatus.notFound
+                  ..close();
+                return;
+              }
+
+              final file = File(resolvedPath);
               if (await file.exists()) {
-                final ext = iconPath.split('.').last.toLowerCase();
+                final ext = resolvedPath.split('.').last.toLowerCase();
                 var contentType = 'image/png';
-                if (ext == 'svg') contentType = 'image/svg+xml';
-                else if (ext == 'xpm') contentType = 'image/x-xpixmap';
-                
-                request.response.headers.contentType = ContentType.parse(contentType);
+                if (ext == 'svg')
+                  contentType = 'image/svg+xml';
+                else if (ext == 'xpm')
+                  contentType = 'image/x-xpixmap';
+
+                request.response.headers.contentType = ContentType.parse(
+                  contentType,
+                );
                 request.response.headers.add('Cache-Control', 'max-age=86400');
                 await file.openRead().pipe(request.response);
                 return;
               }
             }
-            request.response..statusCode = HttpStatus.notFound..close();
+            request.response
+              ..statusCode = HttpStatus.notFound
+              ..close();
           } catch (e) {
-            request.response..statusCode = HttpStatus.internalServerError..close();
+            request.response
+              ..statusCode = HttpStatus.internalServerError
+              ..close();
           }
         } else {
           try {
-            final uri = request.uri.path == '/' ? '/index.html' : request.uri.path;
+            final uri = request.uri.path == '/'
+                ? '/index.html'
+                : request.uri.path;
             final file = File('../frontend$uri');
             if (await file.exists()) {
               final ext = uri.split('.').last;
@@ -96,8 +123,10 @@ class DartServerService {
               if (ext == 'css') contentType = 'text/css';
               if (ext == 'js') contentType = 'application/javascript';
               if (ext == 'png') contentType = 'image/png';
-              
-              request.response.headers.contentType = ContentType.parse(contentType);
+
+              request.response.headers.contentType = ContentType.parse(
+                contentType,
+              );
               await file.openRead().pipe(request.response);
             } else {
               request.response
@@ -127,7 +156,7 @@ class DartServerService {
     _clients.clear();
     await _server?.close(force: true);
     isRunning = false;
-      }
+  }
 
   void _handleClientConnect(WebSocket socket) {
     _clients.add(socket);
@@ -147,7 +176,7 @@ class DartServerService {
         "brightness": currentBrightness,
         "is_muted": isMuted,
         "metrics": metrics,
-      }
+      },
     });
 
     socket.listen(
@@ -180,10 +209,7 @@ class DartServerService {
           _validateConfig(rawConfig);
           configData = rawConfig;
           _saveConfigLocal();
-          _broadcast({
-            "type": "config_updated",
-            "config": configData,
-          });
+          _broadcast({"type": "config_updated", "config": configData});
         }
       } else if (type == 'get_system_apps') {
         _sendSystemApps(socket);
@@ -199,10 +225,11 @@ class DartServerService {
       int cols = board['grid_columns'] ?? 4;
       int rows = board['grid_rows'] ?? 3;
       if (board['items'] == null) continue;
-      
+
       for (var item in board['items']) {
         // Enforce slider security
-        if (item['type'] == 'volume_slider' || item['type'] == 'brightness_slider') {
+        if (item['type'] == 'volume_slider' ||
+            item['type'] == 'brightness_slider') {
           item['span_cols'] = 1;
           item['span_rows'] = 4;
         }
@@ -216,8 +243,10 @@ class DartServerService {
         // Ensure positions are within bounds
         int x = item['grid_x'] ?? 0;
         int y = item['grid_y'] ?? 0;
-        if (x + (item['span_cols'] as int) > cols) item['grid_x'] = cols - (item['span_cols'] as int);
-        if (y + (item['span_rows'] as int) > rows) item['grid_y'] = rows - (item['span_rows'] as int);
+        if (x + (item['span_cols'] as int) > cols)
+          item['grid_x'] = cols - (item['span_cols'] as int);
+        if (y + (item['span_rows'] as int) > rows)
+          item['grid_y'] = rows - (item['span_rows'] as int);
         if ((item['grid_x'] as int) < 0) item['grid_x'] = 0;
         if ((item['grid_y'] as int) < 0) item['grid_y'] = 0;
       }
@@ -226,10 +255,7 @@ class DartServerService {
 
   Future<void> _sendSystemApps(WebSocket socket) async {
     final apps = await SystemActionsService.getInstalledApps();
-    _sendToSocket(socket, {
-      "type": "system_apps_list",
-      "apps": apps
-    });
+    _sendToSocket(socket, {"type": "system_apps_list", "apps": apps});
   }
 
   void _broadcast(Map<String, dynamic> msgObj) {
@@ -268,7 +294,7 @@ class DartServerService {
             "key": "volume",
             "value": currentVolume,
           });
-                  }
+        }
         break;
 
       case 'audio_mute_toggle':
@@ -279,7 +305,7 @@ class DartServerService {
           "key": "is_muted",
           "value": isMuted,
         });
-                break;
+        break;
 
       case 'brightness':
         if (value != null) {
@@ -291,7 +317,7 @@ class DartServerService {
             "key": "brightness",
             "value": currentBrightness,
           });
-                  }
+        }
         break;
 
       case 'mpris_action':
@@ -323,7 +349,10 @@ class DartServerService {
       bool changed = false;
 
       // 1. Differential Audio Volume Query
-      final pactlVol = await Process.run('pactl', ['get-sink-volume', '@DEFAULT_SINK@']);
+      final pactlVol = await Process.run('pactl', [
+        'get-sink-volume',
+        '@DEFAULT_SINK@',
+      ]);
       if (pactlVol.exitCode == 0) {
         final match = RegExp(r'(\d+)%').firstMatch(pactlVol.stdout as String);
         if (match != null) {
@@ -331,19 +360,32 @@ class DartServerService {
           if (v != currentVolume) {
             currentVolume = v;
             changed = true;
-            _broadcast({"type": "state_update", "key": "volume", "value": currentVolume});
+            _broadcast({
+              "type": "state_update",
+              "key": "volume",
+              "value": currentVolume,
+            });
           }
         }
       }
 
       // 2. Differential Audio Mute Query
-      final pactlMute = await Process.run('pactl', ['get-sink-mute', '@DEFAULT_SINK@']);
+      final pactlMute = await Process.run('pactl', [
+        'get-sink-mute',
+        '@DEFAULT_SINK@',
+      ]);
       if (pactlMute.exitCode == 0) {
-        final isMuteNow = (pactlMute.stdout as String).toLowerCase().contains('yes');
+        final isMuteNow = (pactlMute.stdout as String).toLowerCase().contains(
+          'yes',
+        );
         if (isMuteNow != isMuted) {
           isMuted = isMuteNow;
           changed = true;
-          _broadcast({"type": "state_update", "key": "is_muted", "value": isMuted});
+          _broadcast({
+            "type": "state_update",
+            "key": "is_muted",
+            "value": isMuted,
+          });
         }
       }
 
@@ -357,13 +399,18 @@ class DartServerService {
             final maxFile = File('${entries.first.path}/max_brightness');
             if (curFile.existsSync() && maxFile.existsSync()) {
               final curB = int.tryParse(curFile.readAsStringSync().trim()) ?? 0;
-              final maxB = int.tryParse(maxFile.readAsStringSync().trim()) ?? 100;
+              final maxB =
+                  int.tryParse(maxFile.readAsStringSync().trim()) ?? 100;
               if (maxB > 0) {
                 final percent = ((curB / maxB) * 100).round();
                 if ((percent - currentBrightness).abs() >= 2) {
                   currentBrightness = percent;
                   changed = true;
-                  _broadcast({"type": "state_update", "key": "brightness", "value": currentBrightness});
+                  _broadcast({
+                    "type": "state_update",
+                    "key": "brightness",
+                    "value": currentBrightness,
+                  });
                 }
               }
             }
@@ -371,8 +418,7 @@ class DartServerService {
         }
       } catch (_) {}
 
-      if (changed) {
-              }
+      if (changed) {}
     } catch (_) {}
   }
 
@@ -389,7 +435,8 @@ class DartServerService {
             if (match != null) totalKb = double.tryParse(match.group(0)!) ?? 0;
           } else if (line.startsWith('MemAvailable:')) {
             final match = RegExp(r'\d+').firstMatch(line);
-            if (match != null) availableKb = double.tryParse(match.group(0)!) ?? 0;
+            if (match != null)
+              availableKb = double.tryParse(match.group(0)!) ?? 0;
           }
         }
         if (totalKb > 0) {
@@ -471,10 +518,10 @@ class DartServerService {
               "title": "Brightness",
               "span_cols": 1,
               "span_rows": 3,
-            }
-          ]
-        }
-      ]
+            },
+          ],
+        },
+      ],
     };
   }
 }
