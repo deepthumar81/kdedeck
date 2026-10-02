@@ -1,8 +1,10 @@
 # KDE Deck protocol (current state)
 
-This is the protocol actually implemented by the Dart servers on `main`. It is
-an unauthenticated JSON-over-WebSocket protocol with no version or negotiated
-subprotocol.
+This is the protocol actually implemented by the standalone Dart server on
+`main`. It is JSON-over-WebSocket with no version or negotiated subprotocol.
+The standalone server requires authentication before sending state or handling
+control/configuration requests. The Flutter embedded server remains a separate
+implementation and is not changed by this step.
 
 ## Transport and endpoints
 
@@ -19,17 +21,76 @@ The standalone routes are in
 The embedded route behavior is in
 [`kdedeck_mobile/lib/services/dart_server_service.dart`](../kdedeck_mobile/lib/services/dart_server_service.dart#L62-L76).
 Every WebSocket frame is expected to be one JSON object. Invalid JSON is
-logged and ignored; there is no structured error response.
+ignored without echoing or logging the frame; there is no structured error
+response for malformed JSON.
 
 ## Connection lifecycle
 
 1. A client upgrades `/ws`.
-2. The server adds the socket to its in-memory client list.
-3. The server sends one `init_state` object immediately.
-4. The client can send actions or config changes. The server broadcasts
+2. The server adds the socket to its in-memory client list and sends only
+   `{ "type": "auth_required" }`. No config, metrics, pairing code, or other
+   privileged state is sent at this point.
+3. The client sends `authenticate` with either the one-time pairing code or a
+   previously issued bearer token.
+4. After successful authentication, the server sends `auth_success` followed
+   by one `init_state` object. Authenticated clients can then send actions or
+   config changes. The server broadcasts
    `config_updated` and `state_update` to all connected clients as applicable.
-5. A disconnect removes the socket. The Flutter client retries after four
+5. A disconnect removes the socket's in-memory auth association. Bearer
+   sessions remain valid for reconnect until expiry or revocation. The Flutter client retries after four
    seconds; the web configurator does not automatically reconnect.
+
+### Authentication messages
+
+The initial challenge is intentionally minimal:
+
+```json
+{ "type": "auth_required" }
+```
+
+Pair with the local one-time code:
+
+```json
+{ "type": "authenticate", "pairing_code": "<pairing-code>" }
+```
+
+Reconnect with a token returned by a prior successful pairing:
+
+```json
+{ "type": "authenticate", "token": "<bearer-token>" }
+```
+
+On success the standalone server returns the bearer token, its assigned role,
+and then `init_state`:
+
+```json
+{ "type": "auth_success", "token": "<bearer-token>", "role": "configAdmin" }
+```
+
+The token is a client credential and must be stored securely; it is never
+logged by the server. Invalid credentials and authorization failures use a
+bounded response without echoing credentials or request payloads:
+
+```json
+{ "type": "auth_error", "code": "invalid_credentials" }
+```
+
+For this first standalone-server slice, successful bootstrap pairing is always
+assigned `configAdmin` for compatibility. Any caller-supplied role field is
+ignored and cannot elevate itself. This is a deliberate bootstrap limitation,
+not a general role-provisioning model; future pairing/provisioning work must
+replace it with an explicit administrator workflow.
+
+The role capabilities are:
+
+| Request | Required capability |
+|---|---|
+| `trigger_action` | `control` |
+| `save_config` | `configAdmin` |
+| `get_system_apps` | `configAdmin` |
+
+Unauthenticated or insufficiently privileged requests receive `auth_error` and
+do not invoke command execution, configuration persistence, or app discovery.
 
 ### `init_state` (server -> client)
 
@@ -37,7 +98,7 @@ logged and ignored; there is no structured error response.
 {
   "type": "init_state",
   "config": { "boards": [] },
-  "pin_required": false,
+    "pin_required": true,
   "state": {
     "volume": 50,
     "brightness": 70,
@@ -55,8 +116,10 @@ logged and ignored; there is no structured error response.
 }
 ```
 
-`pin_required` is currently always false. Client PIN fields are local
-preferences, not protocol authentication.
+`pin_required` is retained as a legacy compatibility flag and is now `true` for
+authenticated standalone-server sessions. The actual protocol authentication is
+the `authenticate` exchange above; client PIN fields alone are not proof of
+identity.
 
 ## Client -> server messages
 

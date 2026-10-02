@@ -3,45 +3,59 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'app_discovery.dart';
+import 'auth_session_manager.dart';
+import 'command_executor.dart';
 import 'system_actions_service.dart';
 
 class DartServerService {
   static final DartServerService _instance = DartServerService._internal();
   factory DartServerService() => _instance;
-  DartServerService._internal();
+
+  DartServerService._internal()
+    : port = 8484,
+      _bindAddress = InternetAddress.anyIPv4,
+      _configPath = 'deckboard_config.json',
+      _authSessionManager = AuthSessionManager(),
+      _commandExecutor = const ProcessCommandExecutor();
+
+  /// Creates an isolated server for protocol tests.
+  ///
+  /// Production startup uses the [DartServerService] singleton above. This
+  /// constructor intentionally makes the network address, auth state,
+  /// persistence path, and command executor injectable without changing that
+  /// startup path.
+  DartServerService.forTesting({
+    int port = 0,
+    InternetAddress? bindAddress,
+    String configPath = 'deckboard_config.json',
+    AuthSessionManager? authSessionManager,
+    CommandExecutor? commandExecutor,
+  }) : port = port,
+       _bindAddress = bindAddress ?? InternetAddress.loopbackIPv4,
+       _configPath = configPath,
+       _authSessionManager = authSessionManager ?? AuthSessionManager(),
+       _commandExecutor = commandExecutor ?? const ProcessCommandExecutor();
 
   HttpServer? _server;
   final List<WebSocket> _clients = [];
+  final Map<WebSocket, AuthSession> _authenticatedClients = {};
+  final InternetAddress _bindAddress;
+  final String _configPath;
+  final AuthSessionManager _authSessionManager;
+  final CommandExecutor _commandExecutor;
   bool isRunning = false;
-  int port = 8484;
+  int port;
 
   Map<String, dynamic>? configData;
   int currentVolume = 50;
   int currentBrightness = 70;
   bool isMuted = false;
   Timer? _metricsTimer;
-  String? _cachedDisplayOutput;
 
   String? _resolveSystemIconPath(String requestedPath) {
     if (!Platform.isLinux) return null;
     return IconPathValidator(SystemActionsService.linuxIconRoots)
         .resolve(requestedPath);
-  }
-
-  Future<String> _getDisplayOutput() async {
-    if (_cachedDisplayOutput != null) return _cachedDisplayOutput!;
-    try {
-      final res = await Process.run('xrandr', ['--query']);
-      if (res.exitCode == 0) {
-        for (var line in (res.stdout as String).split('\n')) {
-          if (line.contains(' connected')) {
-            _cachedDisplayOutput = line.split(' ').first;
-            return _cachedDisplayOutput!;
-          }
-        }
-      }
-    } catch (_) {}
-    return 'eDP-1';
   }
 
   Map<String, dynamic> metrics = {
@@ -60,7 +74,8 @@ class DartServerService {
     await _loadConfig();
 
     try {
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      _server = await HttpServer.bind(_bindAddress, port);
+      port = _server!.port;
       isRunning = true;
       print("🚀 [DartServerService] Running on port $port");
 
@@ -69,8 +84,8 @@ class DartServerService {
           try {
             final socket = await WebSocketTransformer.upgrade(request);
             _handleClientConnect(socket);
-          } catch (e) {
-            print("WS Upgrade Error: $e");
+          } catch (_) {
+            print("WS Upgrade Error");
           }
         } else if (request.uri.path == '/system_icons' ||
             request.uri.path == '/system_icons/') {
@@ -105,7 +120,7 @@ class DartServerService {
             request.response
               ..statusCode = HttpStatus.notFound
               ..close();
-          } catch (e) {
+          } catch (_) {
             request.response
               ..statusCode = HttpStatus.internalServerError
               ..close();
@@ -134,7 +149,7 @@ class DartServerService {
                 ..write('Not Found')
                 ..close();
             }
-          } catch (e) {
+          } catch (_) {
             request.response
               ..statusCode = HttpStatus.internalServerError
               ..close();
@@ -143,8 +158,8 @@ class DartServerService {
       });
 
       _startMetricsLoop();
-    } catch (e) {
-      print("❌ [DartServerService] Failed to bind port $port: $e");
+    } catch (_) {
+      print("❌ [DartServerService] Failed to bind server");
     }
   }
 
@@ -154,6 +169,7 @@ class DartServerService {
       await client.close();
     }
     _clients.clear();
+    _authenticatedClients.clear();
     await _server?.close(force: true);
     isRunning = false;
   }
@@ -162,15 +178,140 @@ class DartServerService {
     _clients.add(socket);
     print("📱 Client connected! Total clients: ${_clients.length}");
 
+    // Do not disclose config, metrics, or pairing material before auth.
+    _sendToSocket(socket, {"type": "auth_required"});
+
+    socket.listen(
+      (message) {
+        unawaited(_handleMessage(message, socket));
+      },
+      onDone: () {
+        _clients.remove(socket);
+        _authenticatedClients.remove(socket);
+        print("Client disconnected. Remaining: ${_clients.length}");
+      },
+      onError: (err) {
+        _clients.remove(socket);
+        _authenticatedClients.remove(socket);
+      },
+    );
+  }
+
+  Future<void> _handleMessage(dynamic message, WebSocket socket) async {
+    try {
+      final data = jsonDecode(message.toString());
+      if (data is! Map) return;
+      final type = data['type'];
+
+      if (type == 'authenticate') {
+        _authenticate(data, socket);
+      } else if (type == 'trigger_action') {
+        final session = _sessionFor(socket);
+        if (!_requireCapability(socket, session, AuthCapability.control)) {
+          return;
+        }
+        final action = data['action'] ?? '';
+        final payload = data['payload']?.toString() ?? '';
+        final value = data['value'];
+        await _executeAction(action, payload, value);
+      } else if (type == 'save_config') {
+        final session = _sessionFor(socket);
+        if (!_requireCapability(socket, session, AuthCapability.configAdmin)) {
+          return;
+        }
+        if (data['config'] != null) {
+          final rawConfig = Map<String, dynamic>.from(data['config']);
+          _validateConfig(rawConfig);
+          configData = rawConfig;
+          _saveConfigLocal();
+          _broadcast({
+            "type": "config_updated",
+            "config": configData,
+          }, requiredCapability: AuthCapability.configAdmin);
+        }
+      } else if (type == 'get_system_apps') {
+        final session = _sessionFor(socket);
+        if (!_requireCapability(socket, session, AuthCapability.configAdmin)) {
+          return;
+        }
+        await _sendSystemApps(socket);
+      }
+    } catch (_) {
+      // Invalid or malformed frames are ignored without logging their data.
+    }
+  }
+
+  void _authenticate(Map<dynamic, dynamic> data, WebSocket socket) {
+    final pairingCode = data['pairing_code'];
+    final token = data['token'];
+    AuthSession? session;
+
+    if (pairingCode is String && pairingCode.isNotEmpty && token == null) {
+      // Bootstrap pairing is configAdmin-only in this first server slice. A
+      // client-supplied role is deliberately ignored and cannot elevate or
+      // downgrade the server-assigned bootstrap role.
+      session = _authSessionManager.authenticate(
+        pairingCode,
+        role: AuthRole.configAdmin,
+      );
+    } else if (token is String && token.isNotEmpty && pairingCode == null) {
+      session = _authSessionManager.validateToken(token);
+    }
+
+    if (session == null) {
+      _sendAuthError(socket, 'invalid_credentials');
+      return;
+    }
+
+    _authenticatedClients[socket] = session;
+    _sendToSocket(socket, {
+      "type": "auth_success",
+      "token": session.token,
+      "role": session.role.name,
+    });
+    _sendInitState(socket);
+  }
+
+  AuthSession? _sessionFor(WebSocket socket) {
+    final session = _authenticatedClients[socket];
+    if (session == null) return null;
+    final validated = _authSessionManager.validateToken(session.token);
+    if (validated == null) {
+      _authenticatedClients.remove(socket);
+      return null;
+    }
+    return validated;
+  }
+
+  bool _requireCapability(
+    WebSocket socket,
+    AuthSession? session,
+    AuthCapability capability,
+  ) {
+    if (session == null) {
+      _sendAuthError(socket, 'authentication_required');
+      return false;
+    }
+    if (!session.hasCapability(capability)) {
+      _sendAuthError(socket, 'insufficient_permissions');
+      return false;
+    }
+    return true;
+  }
+
+  void _sendAuthError(WebSocket socket, String code) {
+    _sendToSocket(socket, {"type": "auth_error", "code": code});
+  }
+
+  void _sendInitState(WebSocket socket) {
     if (configData == null) {
       configData = _getDefaultConfig();
     }
 
-    // Send initial state upon connection
     _sendToSocket(socket, {
       "type": "init_state",
       "config": configData,
-      "pin_required": false,
+      "pin_required": true,
       "state": {
         "volume": currentVolume,
         "brightness": currentBrightness,
@@ -178,45 +319,6 @@ class DartServerService {
         "metrics": metrics,
       },
     });
-
-    socket.listen(
-      (message) {
-        _handleMessage(message, socket);
-      },
-      onDone: () {
-        _clients.remove(socket);
-        print("Client disconnected. Remaining: ${_clients.length}");
-      },
-      onError: (err) {
-        _clients.remove(socket);
-      },
-    );
-  }
-
-  void _handleMessage(dynamic message, WebSocket socket) {
-    try {
-      final data = jsonDecode(message.toString());
-      final type = data['type'];
-
-      if (type == 'trigger_action') {
-        final action = data['action'] ?? '';
-        final payload = data['payload']?.toString() ?? '';
-        final value = data['value'];
-        _executeAction(action, payload, value);
-      } else if (type == 'save_config') {
-        if (data['config'] != null) {
-          final rawConfig = Map<String, dynamic>.from(data['config']);
-          _validateConfig(rawConfig);
-          configData = rawConfig;
-          _saveConfigLocal();
-          _broadcast({"type": "config_updated", "config": configData});
-        }
-      } else if (type == 'get_system_apps') {
-        _sendSystemApps(socket);
-      }
-    } catch (e) {
-      print("Server message parse error: $e");
-    }
   }
 
   void _validateConfig(Map<String, dynamic> config) {
@@ -254,15 +356,23 @@ class DartServerService {
   }
 
   Future<void> _sendSystemApps(WebSocket socket) async {
-    final apps = await SystemActionsService.getInstalledApps();
+    final apps = await SystemActionsService.getInstalledApps(
+      executor: _commandExecutor,
+    );
     _sendToSocket(socket, {"type": "system_apps_list", "apps": apps});
   }
 
-  void _broadcast(Map<String, dynamic> msgObj) {
+  void _broadcast(
+    Map<String, dynamic> msgObj, {
+    AuthCapability requiredCapability = AuthCapability.view,
+  }) {
     final msg = jsonEncode(msgObj);
-    for (var client in List.from(_clients)) {
+    for (final entry in List<MapEntry<WebSocket, AuthSession>>.from(
+      _authenticatedClients.entries,
+    )) {
+      if (!entry.value.hasCapability(requiredCapability)) continue;
       try {
-        client.add(msg);
+        entry.key.add(msg);
       } catch (_) {}
     }
   }
@@ -275,20 +385,25 @@ class DartServerService {
 
   // --- Linux System Execution Engine ---
 
-  void _executeAction(String action, String payload, dynamic value) async {
-    print("⚡ Executing Action: $action | payload: $payload | value: $value");
-
+  Future<void> _executeAction(
+    String action,
+    String payload,
+    dynamic value,
+  ) async {
     switch (action) {
       case 'launch_app':
       case 'open_url':
-        await SystemActionsService.executeLaunch(payload);
+        await SystemActionsService.executeLaunch(
+          payload,
+          executor: _commandExecutor,
+        );
         break;
 
       case 'audio_volume':
         if (value != null) {
           final vol = (value as num).toInt().clamp(0, 100);
           currentVolume = vol;
-          await SystemActionsService.setVolume(vol);
+          await SystemActionsService.setVolume(vol, executor: _commandExecutor);
           _broadcast({
             "type": "state_update",
             "key": "volume",
@@ -299,7 +414,7 @@ class DartServerService {
 
       case 'audio_mute_toggle':
         isMuted = !isMuted;
-        await SystemActionsService.toggleMute();
+        await SystemActionsService.toggleMute(executor: _commandExecutor);
         _broadcast({
           "type": "state_update",
           "key": "is_muted",
@@ -311,7 +426,10 @@ class DartServerService {
         if (value != null) {
           final b = (value as num).toInt().clamp(5, 100);
           currentBrightness = b;
-          await SystemActionsService.setBrightness(b);
+          await SystemActionsService.setBrightness(
+            b,
+            executor: _commandExecutor,
+          );
           _broadcast({
             "type": "state_update",
             "key": "brightness",
@@ -321,11 +439,17 @@ class DartServerService {
         break;
 
       case 'mpris_action':
-        await SystemActionsService.executeMpris(payload);
+        await SystemActionsService.executeMpris(
+          payload,
+          executor: _commandExecutor,
+        );
         break;
 
       case 'kde_action':
-        await SystemActionsService.executeKdeAction(payload);
+        await SystemActionsService.executeKdeAction(
+          payload,
+          executor: _commandExecutor,
+        );
         break;
     }
   }
@@ -455,15 +579,15 @@ class DartServerService {
 
   Future<void> _loadConfig() async {
     try {
-      final file = File('deckboard_config.json');
+      final file = File(_configPath);
       if (await file.exists()) {
         final str = await file.readAsString();
         configData = jsonDecode(str);
       } else {
         configData = _getDefaultConfig();
       }
-    } catch (e) {
-      print("Error loading config: $e");
+    } catch (_) {
+      print("Error loading config");
       configData = _getDefaultConfig();
     }
   }
@@ -471,10 +595,10 @@ class DartServerService {
   Future<void> _saveConfigLocal() async {
     if (configData == null) return;
     try {
-      final file = File('deckboard_config.json');
+      final file = File(_configPath);
       await file.writeAsString(jsonEncode(configData));
-    } catch (e) {
-      print("Error saving config: $e");
+    } catch (_) {
+      print("Error saving config");
     }
   }
 

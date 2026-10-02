@@ -266,3 +266,108 @@ checks were rerun successfully with the Flutter-bundled Dart SDK at
 Add standalone-server authentication state and protocol tests, beginning with
 rejecting unauthenticated actions/configuration while allowing the public client
 to complete pairing.
+
+## Step 6 — Authentication/session state core
+
+### Goal
+
+Introduce a reusable authentication state component before wiring authentication
+into either Dart server or changing the mobile/web clients.
+
+### Changes made
+
+- Added `deckboard_daemon/backend/lib/auth_session_manager.dart`.
+- Added `deckboard_daemon/backend/test/auth_session_manager_test.dart`.
+- Added one-time pairing code generation/expiry and successful-pair consumption.
+- Added high-entropy in-memory bearer sessions with expiry and revocation.
+- Added `viewer`, `control`, and `configAdmin` roles with explicit capabilities.
+- Added constant-time pairing-code comparison.
+- Redacted pairing codes and tokens from diagnostic `toString()` output.
+
+### Verification
+
+- Full backend `dart test`: **PASS**, 29 tests.
+- Focused `dart analyze` for the new manager/tests: **PASS**, no issues.
+- Focused `dart format --output=none --set-exit-if-changed ...`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Known limitations
+
+- This component is currently in-memory and is not wired into the server.
+- Pairing-code display, secure client storage, TLS, rate limiting, persistence,
+  and client authentication messages remain future steps.
+- The current server still sends state immediately and accepts actions without
+  authorization; this step deliberately does not change that behaviour yet.
+
+### Next step
+
+Wire this manager into the standalone server's WebSocket lifecycle: send only a
+minimal authentication challenge before pairing, reject unauthenticated action,
+configuration, and discovery messages, and add protocol tests without exposing
+the PIN or pairing secret.
+
+## Step 7 — Standalone server authentication wiring
+
+### Goal
+
+Wire the in-memory auth/session manager into the standalone Dart WebSocket
+server without changing the Flutter client/server or existing discovery/icon
+behavior.
+
+### Changes made
+
+- Each standalone WebSocket now starts unauthenticated and receives only an
+  `auth_required` challenge.
+- Pairing accepts the one-time `pairing_code`; reconnect accepts an existing
+  bearer `token`. Successful authentication sends `auth_success` and then the
+  existing `init_state`.
+- Bootstrap pairing is assigned `configAdmin` in this first server slice for
+  compatibility. Caller-supplied roles are ignored and cannot elevate a
+  session.
+- `trigger_action` requires `control`; `save_config` and `get_system_apps`
+  require `configAdmin`. Rejected requests return bounded `auth_error` messages
+  and do not reach command execution, persistence, or discovery.
+- Background state broadcasts now target authenticated sockets only. Per-socket
+  auth associations are removed on disconnect while bearer sessions remain
+  available for reconnect until expiry/revocation.
+- Added `DartServerService.forTesting` for an ephemeral loopback server with
+  injected auth state, config path, and fake `CommandExecutor`.
+- Added `test/dart_server_auth_test.dart` covering challenge/rejection,
+  pairing, token reconnect, and role gates.
+
+### Documentation updated
+
+- `docs/protocol.md` now defines the standalone authentication lifecycle,
+  messages, capabilities, and bootstrap limitation.
+
+### Verification
+
+- Focused `dart test test/dart_server_auth_test.dart`: **PASS**, 4 tests.
+- Full backend `dart test`: **PASS**, 33 tests.
+- Focused changed-file `dart analyze`: **PASS**, info-level style diagnostics
+  only; no warnings or errors.
+- `dart format --output=none --set-exit-if-changed` on changed Dart files:
+  **PASS**.
+- `dart compile exe bin/backend.dart -o /tmp/kdedeck-daemon-step7`:
+  **PASS**.
+- The host `/snap/bin/dart` command remains unavailable because snap
+  confinement lacks `cap_dac_override`; all checks above used the Flutter-bundled
+  Dart SDK at `/home/kaily/snap/flutter/common/flutter/bin/cache/dart-sdk/bin`.
+
+- The legacy `pin_required` field is now `true` after successful standalone
+  authentication, and configuration broadcasts are limited to authenticated
+  clients with the `configAdmin` capability.
+
+### Known limitations
+
+- Bootstrap pairing is intentionally always `configAdmin`; there is no remote
+  role-provisioning workflow yet.
+- Authentication is in-memory and bearer tokens are not persisted across a
+  daemon restart. TLS, rate limiting, and secure client credential storage
+  remain future work.
+
+### Next step
+
+Update the standalone/web client flows to authenticate before requesting state,
+then converge the embedded server on the same authorization policy when client
+compatibility work is approved.
