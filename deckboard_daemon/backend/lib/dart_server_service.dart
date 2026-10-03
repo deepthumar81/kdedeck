@@ -3,8 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'app_discovery.dart';
+import 'auth_rate_limiter.dart';
 import 'auth_session_manager.dart';
 import 'command_executor.dart';
+import 'config_validator.dart';
+import 'server_tls.dart';
 import 'system_actions_service.dart';
 
 class DartServerService {
@@ -13,9 +16,14 @@ class DartServerService {
 
   DartServerService._internal()
     : port = 8484,
-      _bindAddress = InternetAddress.anyIPv4,
+      _bindAddress = InternetAddress.loopbackIPv4,
+      _bindAddressOverride = null,
       _configPath = 'deckboard_config.json',
-      _authSessionManager = AuthSessionManager(),
+      _authSessionManager = AuthSessionManager(issueCodeOnCreate: false),
+      _authRateLimiter = AuthRateLimiter(),
+      _clientIdentityResolver = _defaultClientIdentity,
+      _configValidator = const ConfigValidator(),
+      _environment = Platform.environment,
       _commandExecutor = const ProcessCommandExecutor();
 
   /// Creates an isolated server for protocol tests.
@@ -29,22 +37,55 @@ class DartServerService {
     InternetAddress? bindAddress,
     String configPath = 'deckboard_config.json',
     AuthSessionManager? authSessionManager,
+    AuthRateLimiter? authRateLimiter,
+    String Function(HttpRequest request)? clientIdentityResolver,
+    ConfigLimits? configLimits,
     CommandExecutor? commandExecutor,
+    Map<String, String> environment = const {},
   }) : port = port,
        _bindAddress = bindAddress ?? InternetAddress.loopbackIPv4,
+       _bindAddressOverride = bindAddress,
        _configPath = configPath,
-       _authSessionManager = authSessionManager ?? AuthSessionManager(),
+       _authSessionManager =
+           authSessionManager ?? AuthSessionManager(issueCodeOnCreate: false),
+       _authRateLimiter = authRateLimiter ?? AuthRateLimiter(),
+       _clientIdentityResolver =
+           clientIdentityResolver ?? _defaultClientIdentity,
+       _configValidator = ConfigValidator(
+         limits: configLimits ?? const ConfigLimits(),
+       ),
+       _environment = Map<String, String>.of(environment),
        _commandExecutor = commandExecutor ?? const ProcessCommandExecutor();
 
   HttpServer? _server;
   final List<WebSocket> _clients = [];
   final Map<WebSocket, AuthSession> _authenticatedClients = {};
-  final InternetAddress _bindAddress;
+  InternetAddress _bindAddress;
+  final InternetAddress? _bindAddressOverride;
   final String _configPath;
   final AuthSessionManager _authSessionManager;
+  final AuthRateLimiter _authRateLimiter;
+  final String Function(HttpRequest request) _clientIdentityResolver;
+  final ConfigValidator _configValidator;
+  final Map<String, String> _environment;
   final CommandExecutor _commandExecutor;
+  Future<void> _saveOperation = Future<void>.value();
   bool isRunning = false;
+  bool isSecure = false;
   int port;
+
+  /// The effective address selected for the next server start.
+  InternetAddress get bindAddress => _bindAddress;
+
+  /// Issues a new one-time code for a local, already-running daemon.
+  ///
+  /// Only the local terminal caller should display the returned secret. Never
+  /// include it in server logs, exceptions, or network responses.
+  ({String code, DateTime expiresAt}) issueLocalPairingCode() {
+    if (!isRunning) throw StateError('Server is not running');
+    final code = _authSessionManager.issuePairingCode();
+    return (code: code, expiresAt: _authSessionManager.pairingCodeExpiresAt!);
+  }
 
   Map<String, dynamic>? configData;
   int currentVolume = 50;
@@ -74,16 +115,29 @@ class DartServerService {
     await _loadConfig();
 
     try {
-      _server = await HttpServer.bind(_bindAddress, port);
+      final context = serverTlsContext(
+        _environment,
+        requireTls: !_bindAddress.isLoopback,
+      );
+      _server = context == null
+          ? await HttpServer.bind(_bindAddress, port)
+          : await HttpServer.bindSecure(_bindAddress, port, context);
       port = _server!.port;
+      isSecure = context != null;
       isRunning = true;
-      print("🚀 [DartServerService] Running on port $port");
+      final mode = _bindAddress.address == InternetAddress.anyIPv4.address
+          ? 'LAN'
+          : 'loopback';
+      print(
+        "🚀 [DartServerService] Running in $mode mode (${isSecure ? 'HTTPS/WSS' : 'HTTP/WS'}) on ${_bindAddress.address}:$port",
+      );
 
       _server!.listen((HttpRequest request) async {
         if (request.uri.path == '/ws') {
           try {
+            final clientIdentity = _clientIdentityResolver(request);
             final socket = await WebSocketTransformer.upgrade(request);
-            _handleClientConnect(socket);
+            _handleClientConnect(socket, clientIdentity);
           } catch (_) {
             print("WS Upgrade Error");
           }
@@ -157,25 +211,38 @@ class DartServerService {
         }
       });
 
+      _authSessionManager.addRevocationListener(_closeRevokedClients);
       _startMetricsLoop();
     } catch (_) {
-      print("❌ [DartServerService] Failed to bind server");
+      _authSessionManager.removeRevocationListener(_closeRevokedClients);
+      await _server?.close(force: true);
+      _server = null;
+      isRunning = false;
+      isSecure = false;
+      print(
+        "❌ [DartServerService] Failed to start server (check TLS settings and bind address)",
+      );
     }
   }
 
   Future<void> stopServer() async {
+    _authSessionManager.removeRevocationListener(_closeRevokedClients);
     _metricsTimer?.cancel();
     for (var client in _clients) {
       await client.close();
     }
     _clients.clear();
     _authenticatedClients.clear();
+    _clientIdentities.clear();
     await _server?.close(force: true);
+    _server = null;
     isRunning = false;
+    isSecure = false;
   }
 
-  void _handleClientConnect(WebSocket socket) {
+  void _handleClientConnect(WebSocket socket, String clientIdentity) {
     _clients.add(socket);
+    _clientIdentities[socket] = clientIdentity;
     print("📱 Client connected! Total clients: ${_clients.length}");
 
     // Do not disclose config, metrics, or pairing material before auth.
@@ -188,11 +255,13 @@ class DartServerService {
       onDone: () {
         _clients.remove(socket);
         _authenticatedClients.remove(socket);
+        _clientIdentities.remove(socket);
         print("Client disconnected. Remaining: ${_clients.length}");
       },
       onError: (err) {
         _clients.remove(socket);
         _authenticatedClients.remove(socket);
+        _clientIdentities.remove(socket);
       },
     );
   }
@@ -220,14 +289,23 @@ class DartServerService {
           return;
         }
         if (data['config'] != null) {
-          final rawConfig = Map<String, dynamic>.from(data['config']);
-          _validateConfig(rawConfig);
-          configData = rawConfig;
-          _saveConfigLocal();
+          final savedConfig = await _saveConfigLocal(data['config']);
+          if (savedConfig == null) {
+            _sendToSocket(socket, {
+              "type": "config_error",
+              "code": "invalid_config",
+            });
+            return;
+          }
           _broadcast({
             "type": "config_updated",
-            "config": configData,
+            "config": savedConfig,
           }, requiredCapability: AuthCapability.configAdmin);
+        } else {
+          _sendToSocket(socket, {
+            "type": "config_error",
+            "code": "invalid_config",
+          });
         }
       } else if (type == 'get_system_apps') {
         final session = _sessionFor(socket);
@@ -242,27 +320,50 @@ class DartServerService {
   }
 
   void _authenticate(Map<dynamic, dynamic> data, WebSocket socket) {
+    final existingSession = _sessionFor(socket);
+    final clientIdentity = _clientIdentities[socket];
+    if (existingSession == null &&
+        (clientIdentity == null ||
+            !_authRateLimiter.isAllowed(clientIdentity))) {
+      _sendAuthError(socket, 'rate_limited');
+      return;
+    }
+
     final pairingCode = data['pairing_code'];
     final token = data['token'];
     AuthSession? session;
+    AuthAuthenticationFailure? authenticationFailure;
 
     if (pairingCode is String && pairingCode.isNotEmpty && token == null) {
       // Bootstrap pairing is configAdmin-only in this first server slice. A
       // client-supplied role is deliberately ignored and cannot elevate or
       // downgrade the server-assigned bootstrap role.
-      session = _authSessionManager.authenticate(
+      final result = _authSessionManager.authenticateWithStatus(
         pairingCode,
         role: AuthRole.configAdmin,
       );
+      session = result.session;
+      authenticationFailure = result.failure;
     } else if (token is String && token.isNotEmpty && pairingCode == null) {
       session = _authSessionManager.validateToken(token);
     }
 
     if (session == null) {
-      _sendAuthError(socket, 'invalid_credentials');
+      if (existingSession == null && clientIdentity != null) {
+        _authRateLimiter.recordFailure(clientIdentity);
+      }
+      _sendAuthError(
+        socket,
+        authenticationFailure == AuthAuthenticationFailure.capacityReached
+            ? 'session_capacity'
+            : 'invalid_credentials',
+      );
       return;
     }
 
+    if (clientIdentity != null) {
+      _authRateLimiter.recordSuccess(clientIdentity);
+    }
     _authenticatedClients[socket] = session;
     _sendToSocket(socket, {
       "type": "auth_success",
@@ -281,6 +382,29 @@ class DartServerService {
       return null;
     }
     return validated;
+  }
+
+  void _closeRevokedClients() {
+    for (final entry in List<MapEntry<WebSocket, AuthSession>>.of(
+      _authenticatedClients.entries,
+    )) {
+      if (_authSessionManager.validateToken(entry.value.token) != null) {
+        continue;
+      }
+      final socket = entry.key;
+      _authenticatedClients.remove(socket);
+      _clients.remove(socket);
+      _clientIdentities.remove(socket);
+      unawaited(_closeInvalidSession(socket));
+    }
+  }
+
+  Future<void> _closeInvalidSession(WebSocket socket) async {
+    try {
+      await socket.close(WebSocketStatus.policyViolation, 'Session invalid');
+    } catch (_) {
+      // A disconnected client has no remaining authorization state to clear.
+    }
   }
 
   bool _requireCapability(
@@ -321,44 +445,18 @@ class DartServerService {
     });
   }
 
-  void _validateConfig(Map<String, dynamic> config) {
-    if (config['boards'] == null) return;
-    for (var board in config['boards']) {
-      int cols = board['grid_columns'] ?? 4;
-      int rows = board['grid_rows'] ?? 3;
-      if (board['items'] == null) continue;
-
-      for (var item in board['items']) {
-        // Enforce slider security
-        if (item['type'] == 'volume_slider' ||
-            item['type'] == 'brightness_slider') {
-          item['span_cols'] = 1;
-          item['span_rows'] = 4;
-        }
-
-        // Clamp spans to not exceed board dimensions
-        int spanCols = item['span_cols'] ?? 1;
-        int spanRows = item['span_rows'] ?? 1;
-        if (spanCols > cols) item['span_cols'] = cols;
-        if (spanRows > rows) item['span_rows'] = rows;
-
-        // Ensure positions are within bounds
-        int x = item['grid_x'] ?? 0;
-        int y = item['grid_y'] ?? 0;
-        if (x + (item['span_cols'] as int) > cols)
-          item['grid_x'] = cols - (item['span_cols'] as int);
-        if (y + (item['span_rows'] as int) > rows)
-          item['grid_y'] = rows - (item['span_rows'] as int);
-        if ((item['grid_x'] as int) < 0) item['grid_x'] = 0;
-        if ((item['grid_y'] as int) < 0) item['grid_y'] = 0;
-      }
-    }
-  }
-
   Future<void> _sendSystemApps(WebSocket socket) async {
     final apps = await SystemActionsService.getInstalledApps(
       executor: _commandExecutor,
     );
+    if (!_clients.contains(socket)) return;
+    if (!_requireCapability(
+      socket,
+      _sessionFor(socket),
+      AuthCapability.configAdmin,
+    )) {
+      return;
+    }
     _sendToSocket(socket, {"type": "system_apps_list", "apps": apps});
   }
 
@@ -370,7 +468,9 @@ class DartServerService {
     for (final entry in List<MapEntry<WebSocket, AuthSession>>.from(
       _authenticatedClients.entries,
     )) {
-      if (!entry.value.hasCapability(requiredCapability)) continue;
+      final session = _sessionFor(entry.key);
+      if (session == null || !session.hasCapability(requiredCapability))
+        continue;
       try {
         entry.key.add(msg);
       } catch (_) {}
@@ -382,6 +482,8 @@ class DartServerService {
       socket.add(jsonEncode(msgObj));
     } catch (_) {}
   }
+
+  final Map<WebSocket, String> _clientIdentities = {};
 
   // --- Linux System Execution Engine ---
 
@@ -578,27 +680,92 @@ class DartServerService {
   // --- Persistence ---
 
   Future<void> _loadConfig() async {
+    final primary = await _readValidatedConfig(File(_configPath));
+    if (primary != null) {
+      configData = primary;
+      _applyBindSetting(primary);
+      return;
+    }
+
+    final backup = await _readValidatedConfig(File('$_configPath.bak'));
+    if (backup != null) {
+      configData = backup;
+      _applyBindSetting(backup);
+      return;
+    }
+
+    configData = _getDefaultConfig();
+    _applyBindSetting(configData!);
+  }
+
+  void _applyBindSetting(Map<String, dynamic> config) {
+    if (_bindAddressOverride != null) return;
+
+    // LAN exposure is an explicit boolean opt-in. Never accept a caller
+    // supplied address here: config data may originate from a WebSocket save.
+    _bindAddress = config['allow_lan'] is bool && config['allow_lan'] == true
+        ? InternetAddress.anyIPv4
+        : InternetAddress.loopbackIPv4;
+  }
+
+  Future<Map<String, dynamic>?> _saveConfigLocal(Object? candidate) {
+    final validation = _configValidator.validate(candidate);
+    final validated = validation.config;
+    if (validated == null) return Future<Map<String, dynamic>?>.value(null);
+
+    final operation = _saveOperation.then((_) async {
+      if (!await _writeConfigAtomically(validated, configData)) return null;
+      configData = validated;
+      return validated;
+    });
+    // A failed write must not poison later saves in the serialized queue.
+    _saveOperation = operation.then<void>((_) {}, onError: (_) {});
+    return operation;
+  }
+
+  Future<Map<String, dynamic>?> _readValidatedConfig(File file) async {
     try {
-      final file = File(_configPath);
-      if (await file.exists()) {
-        final str = await file.readAsString();
-        configData = jsonDecode(str);
-      } else {
-        configData = _getDefaultConfig();
+      if (!await file.exists()) return null;
+      if (await file.length() > _configValidator.limits.maxSerializedBytes) {
+        return null;
       }
+      final decoded = jsonDecode(await file.readAsString());
+      return _configValidator.validate(decoded).config;
     } catch (_) {
-      print("Error loading config");
-      configData = _getDefaultConfig();
+      return null;
     }
   }
 
-  Future<void> _saveConfigLocal() async {
-    if (configData == null) return;
+  Future<bool> _writeConfigAtomically(
+    Map<String, dynamic> config,
+    Map<String, dynamic>? previousConfig,
+  ) async {
+    final target = File(_configPath);
+    final tempPath =
+        '$_configPath.tmp-${pid}-${DateTime.now().microsecondsSinceEpoch}';
+    final backup = File('$_configPath.bak');
+    final backupTemp = File('$tempPath.bak');
     try {
-      final file = File(_configPath);
-      await file.writeAsString(jsonEncode(configData));
+      final encoded = jsonEncode(config);
+      await File(tempPath).writeAsString(encoded, flush: true);
+
+      if (previousConfig != null) {
+        await backupTemp.writeAsString(jsonEncode(previousConfig), flush: true);
+        await backupTemp.rename(backup.path);
+      }
+
+      // On the daemon's supported POSIX runtime rename replaces the target as
+      // one filesystem operation. The old target remains usable if any step
+      // before this point fails, and the .bak is always last-known-good.
+      await File(tempPath).rename(target.path);
+      return true;
     } catch (_) {
-      print("Error saving config");
+      try {
+        final temp = File(tempPath);
+        if (await temp.exists()) await temp.delete();
+        if (await backupTemp.exists()) await backupTemp.delete();
+      } catch (_) {}
+      return false;
     }
   }
 
@@ -615,7 +782,7 @@ class DartServerService {
               "id": "btn_1",
               "title": "Terminal",
               "action": "launch_app",
-              "payload": "konsole || gnome-terminal || xterm",
+              "payload": "konsole",
               "icon": "terminal",
               "span_cols": 1,
               "span_rows": 1,
@@ -649,3 +816,6 @@ class DartServerService {
     };
   }
 }
+
+String _defaultClientIdentity(HttpRequest request) =>
+    request.connectionInfo?.remoteAddress.address ?? 'unknown';

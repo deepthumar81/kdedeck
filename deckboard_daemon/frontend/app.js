@@ -1,4 +1,9 @@
-const ws = new WebSocket(`ws://${window.location.host}/ws`);
+const AUTH_TOKEN_STORAGE_KEY = 'kdedeck.authToken';
+const RECONNECT_DELAY_MS = 2000;
+let ws = null;
+let reconnectTimer = null;
+let isAuthenticated = false;
+let authChallengeReceived = false;
 let configData = null;
 let activeBoardIdx = 0;
 let draggedItemIndex = null;
@@ -15,28 +20,173 @@ const manualSaveBtn = document.getElementById('manual-save-btn');
 const autoSaveToggle = document.getElementById('autosave-toggle');
 const colsSelect = document.getElementById('grid-cols-select');
 const rowsSelect = document.getElementById('grid-rows-select');
+const authModal = document.getElementById('auth-modal');
+const authForm = document.getElementById('auth-form');
+const pairingCodeInput = document.getElementById('pairing-code');
+const authErrorEl = document.getElementById('auth-error');
 
-// Connection Logic
-ws.onopen = () => {
-    statusEl.textContent = 'Online';
-    statusEl.className = 'status-online';
-    ws.send(JSON.stringify({ type: "get_system_apps" })); // Fetch apps on connect
-};
+function availableStorages() {
+    const storages = [];
+    try {
+        storages.push(window.sessionStorage);
+    } catch (_) {
+        // Storage can be unavailable in private/restricted browser contexts.
+    }
+    try {
+        storages.push(window.localStorage);
+    } catch (_) {
+        // Storage can be unavailable in private/restricted browser contexts.
+    }
+    return storages;
+}
 
-ws.onclose = () => {
-    statusEl.textContent = 'Offline';
-    statusEl.className = 'status-offline';
-};
+function readAuthToken(storage) {
+    try {
+        return storage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    } catch (_) {
+        return null;
+    }
+}
 
-ws.onmessage = (event) => {
+function storedAuthToken() {
+    return availableStorages().map(readAuthToken).find(Boolean) || null;
+}
+
+function storeAuthToken(token) {
+    availableStorages().forEach((storage) => {
+        try {
+            storage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+        } catch (_) {
+            // Storage can be unavailable in private/restricted browser contexts.
+        }
+    });
+}
+
+function clearStoredAuthToken() {
+    availableStorages().forEach((storage) => {
+        try {
+            storage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+        } catch (_) {
+            // Storage can be unavailable in private/restricted browser contexts.
+        }
+    });
+}
+
+function setConnectionStatus(text, className) {
+    statusEl.textContent = text;
+    statusEl.className = className;
+}
+
+function showAuthModal(message = '') {
+    authModal.classList.add('show');
+    authModal.setAttribute('aria-hidden', 'false');
+    authErrorEl.textContent = message;
+    if (!message) pairingCodeInput.focus();
+}
+
+function hideAuthModal() {
+    authModal.classList.remove('show');
+    authModal.setAttribute('aria-hidden', 'true');
+    authErrorEl.textContent = '';
+    pairingCodeInput.value = '';
+}
+
+function sendAuthenticatedMessage(payload) {
+    if (!isAuthenticated || !ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(payload));
+    return true;
+}
+
+function requestSystemApps() {
+    sendAuthenticatedMessage({ type: 'get_system_apps' });
+}
+
+function scheduleReconnect() {
+    if (reconnectTimer !== null) return;
+    reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connectWebSocket();
+    }, RECONNECT_DELAY_MS);
+}
+
+function connectWebSocket() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
+
+    ws.onopen = () => {
+        isAuthenticated = false;
+        authChallengeReceived = false;
+        setConnectionStatus('Authenticating...', 'status-offline');
+    };
+
+    ws.onclose = () => {
+        isAuthenticated = false;
+        authChallengeReceived = false;
+        setConnectionStatus('Offline', 'status-offline');
+        scheduleReconnect();
+    };
+
+    ws.onerror = () => {
+        setConnectionStatus('Connection error', 'status-offline');
+    };
+
+    ws.onmessage = handleWebSocketMessage;
+}
+
+function handleWebSocketMessage(event) {
     try {
         const msg = JSON.parse(event.data);
+        if (msg.type === 'auth_required') {
+            authChallengeReceived = true;
+            const token = storedAuthToken();
+            if (token) {
+                setConnectionStatus('Authenticating...', 'status-offline');
+                ws.send(JSON.stringify({ type: 'authenticate', token }));
+            } else {
+                setConnectionStatus('Pairing required', 'status-offline');
+                showAuthModal();
+            }
+            return;
+        }
+
+        if (msg.type === 'auth_success') {
+            if (typeof msg.token !== 'string' || msg.token.length === 0) {
+                isAuthenticated = false;
+                clearStoredAuthToken();
+                showAuthModal('The server did not provide a valid session. Enter a new pairing code.');
+                return;
+            }
+            storeAuthToken(msg.token);
+            isAuthenticated = true;
+            setConnectionStatus('Online', 'status-online');
+            hideAuthModal();
+            return;
+        }
+
+        if (msg.type === 'auth_error') {
+            isAuthenticated = false;
+            if (msg.code === 'invalid_credentials') {
+                clearStoredAuthToken();
+                setConnectionStatus('Pairing required', 'status-offline');
+                showAuthModal('The pairing code or saved session is invalid. Enter a new pairing code.');
+            } else {
+                setConnectionStatus('Authentication error', 'status-offline');
+                showAuthModal('Authentication was not accepted. Try again.');
+            }
+            return;
+        }
+
+        if (!isAuthenticated) return;
+
         if (msg.type === 'config_sync' || msg.type === 'init_state' || msg.type === 'config_updated') {
             configData = msg.config;
             isDirty = false;
             updateManualSaveBtn();
             renderSidebar();
             renderGrid();
+            if (msg.type === 'init_state') requestSystemApps();
         } else if (msg.type === 'system_apps_list') {
             systemApps = msg.apps || [];
             if (modal.classList.contains('show') && document.getElementById('edit-action').value === 'launch_app') {
@@ -51,7 +201,24 @@ ws.onmessage = (event) => {
     } catch(e) {
         console.error("Failed to parse message", e);
     }
-};
+}
+
+authForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const pairingCode = pairingCodeInput.value.trim();
+    if (!pairingCode) {
+        authErrorEl.textContent = 'Enter the pairing code to continue.';
+        return;
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN || !authChallengeReceived) {
+        authErrorEl.textContent = 'Waiting for the server connection. Try again in a moment.';
+        return;
+    }
+    setConnectionStatus('Authenticating...', 'status-offline');
+    ws.send(JSON.stringify({ type: 'authenticate', pairing_code: pairingCode }));
+});
+
+connectWebSocket();
 
 // Save Logic
 autoSaveToggle.addEventListener('change', (e) => {
@@ -86,10 +253,11 @@ manualSaveBtn.addEventListener('click', () => {
 });
 
 function saveConfig() {
-    ws.send(JSON.stringify({
+    const sent = sendAuthenticatedMessage({
         type: "save_config",
         config: configData
-    }));
+    });
+    if (!sent) return;
     isDirty = false;
     updateManualSaveBtn();
 }
@@ -748,7 +916,11 @@ spanSelect.addEventListener('change', () => {
 });
 
 function openEditor(idx, dropX = null, dropY = null) {
-    ws.send(JSON.stringify({ type: "get_system_apps" })); // Pre-fetch apps
+    if (!isAuthenticated) {
+        showAuthModal('Pair with the server before editing the board.');
+        return;
+    }
+    requestSystemApps(); // Pre-fetch apps
     
     const form = document.getElementById('editor-form');
     form.reset();

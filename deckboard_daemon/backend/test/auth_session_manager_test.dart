@@ -3,6 +3,14 @@ import 'package:test/test.dart';
 
 void main() {
   group('AuthSessionManager pairing', () {
+    test('local-only mode stays closed until explicit issuance', () {
+      final manager = AuthSessionManager(issueCodeOnCreate: false);
+      expect(manager.pairingCode, isNull);
+      expect(manager.authenticate('unrequested-code'), isNull);
+      manager.issuePairingCode(code: 'dummy-local-code');
+      expect(manager.authenticate('dummy-local-code'), isNotNull);
+    });
+
     test('generates a pairing code when one is not supplied', () {
       final manager = AuthSessionManager();
 
@@ -105,6 +113,69 @@ void main() {
       expect(manager.activeSessionCount, 0);
     });
 
+    test('cleans up expired sessions before enforcing capacity', () {
+      final clock = FakeClock(DateTime.utc(2026, 1, 1));
+      final manager = AuthSessionManager(
+        pairingCode: 'first-code',
+        sessionLifetime: const Duration(seconds: 10),
+        maxActiveSessions: 1,
+        clock: clock.now,
+      );
+      final first = manager.authenticate('first-code')!;
+
+      manager.issuePairingCode(code: 'second-code');
+      clock.advance(const Duration(seconds: 10));
+      final second = manager.authenticateWithStatus('second-code');
+
+      expect(second.session, isNotNull);
+      expect(manager.activeSessionCount, 1);
+      expect(manager.validateToken(first.token), isNull);
+    });
+
+    test('rejects pairing at capacity without consuming the pairing code', () {
+      final manager = AuthSessionManager(
+        pairingCode: 'first-code',
+        maxActiveSessions: 1,
+      );
+      final first = manager.authenticate('first-code')!;
+      manager.issuePairingCode(code: 'second-code');
+
+      final result = manager.authenticateWithStatus('second-code');
+
+      expect(result.session, isNull);
+      expect(result.failure, AuthAuthenticationFailure.capacityReached);
+      expect(manager.pairingCode, 'second-code');
+      expect(manager.validateToken(first.token), same(first));
+      expect(manager.authenticate('wrong-code'), isNull);
+      expect(manager.pairingCode, 'second-code');
+      expect(result.toString(), isNot(contains(first.token)));
+    });
+
+    test('revokes sessions by role while preserving other active sessions', () {
+      final manager = _managerWithCode('viewer-code');
+      final viewer = manager.authenticate(
+        'viewer-code',
+        role: AuthRole.viewer,
+      )!;
+      manager.issuePairingCode(code: 'control-code');
+      final control = manager.authenticate(
+        'control-code',
+        role: AuthRole.control,
+      )!;
+      manager.issuePairingCode(code: 'admin-code');
+      final admin = manager.authenticate(
+        'admin-code',
+        role: AuthRole.configAdmin,
+      )!;
+
+      expect(manager.revokeSessionsByRole(AuthRole.control), 1);
+      expect(manager.validateToken(viewer.token), same(viewer));
+      expect(manager.validateToken(control.token), isNull);
+      expect(manager.validateToken(admin.token), same(admin));
+      expect(manager.revokeAllSessions(), 2);
+      expect(manager.activeSessionCount, 0);
+    });
+
     test('revokes a token', () {
       final manager = _managerWithCode('pair-me');
       final session = manager.authenticate('pair-me')!;
@@ -113,6 +184,42 @@ void main() {
       expect(manager.validateToken(session.token), isNull);
       expect(manager.revokeToken(session.token), isFalse);
     });
+
+    test(
+      'notifies only after effective revocations, without token payloads',
+      () {
+        final manager = _managerWithCode('viewer');
+        final viewer = manager.authenticate('viewer', role: AuthRole.viewer)!;
+        manager.issuePairingCode(code: 'control');
+        final control = manager.authenticate(
+          'control',
+          role: AuthRole.control,
+        )!;
+        var notifications = 0;
+        void listener() {
+          notifications++;
+          expect(manager.validateToken(viewer.token), isNull);
+        }
+
+        manager.addRevocationListener(listener);
+        expect(manager.revokeToken('unknown'), isFalse);
+        expect(manager.revokeSessionsByRole(AuthRole.configAdmin), 0);
+        expect(notifications, 0);
+        expect(manager.revokeToken(viewer.token), isTrue);
+        expect(notifications, 1);
+        expect(manager.revokeToken(viewer.token), isFalse);
+        expect(manager.revokeSessionsByRole(AuthRole.control), 1);
+        expect(manager.validateToken(control.token), isNull);
+        expect(notifications, 2);
+        expect(manager.revokeAllSessions(), 0);
+        expect(notifications, 2);
+        manager.removeRevocationListener(listener);
+        manager.issuePairingCode(code: 'another');
+        manager.authenticate('another');
+        expect(manager.revokeAllSessions(), 1);
+        expect(notifications, 2);
+      },
+    );
 
     test('does not expose pairing codes or tokens in diagnostics', () {
       final manager = _managerWithCode('pairing-secret');

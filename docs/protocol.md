@@ -10,8 +10,8 @@ implementation and is not changed by this step.
 
 | Endpoint | Standalone daemon | Flutter desktop embedded server |
 |---|---|---|
-| Bind | `0.0.0.0:8484` (`anyIPv4`) | `0.0.0.0:8484` (`anyIPv4`) |
-| WebSocket | `ws://host:8484/ws` | `ws://host:8484/ws` |
+| Bind | `127.0.0.1:8484` by default; `0.0.0.0:8484` only with `allow_lan: true` | `0.0.0.0:8484` (`anyIPv4`) |
+| WebSocket | `wss://host:8484/ws` for LAN/TLS; `ws://127.0.0.1:8484/ws` only when loopback TLS is unset | `ws://host:8484/ws` |
 | `/` and static frontend | Serves `deckboard_daemon/frontend` | Not served; returns `KDeDeck Server Running` with 404 |
 | `/system_icons?path=...` | Serves an existing file path | Not served |
 | Persistence | `deckboard_config.json` in daemon working directory | `SharedPreferences` key `deck_config_data` |
@@ -23,6 +23,37 @@ The embedded route behavior is in
 Every WebSocket frame is expected to be one JSON object. Invalid JSON is
 ignored without echoing or logging the frame; there is no structured error
 response for malformed JSON.
+
+### Standalone bind mode
+
+The standalone daemon reads one optional top-level transport setting from the
+validated configuration:
+
+```json
+{ "allow_lan": true, "boards": [] }
+```
+
+Only the JSON boolean `true` opts into the LAN bind (`anyIPv4`, normally
+`0.0.0.0`). An omitted setting, `false`, or any invalid value fails closed to
+the IPv4 loopback address (`127.0.0.1`). Arbitrary `bind_address` values are
+not supported, and no WebSocket request can select a remote bind address.
+Changes made through `save_config` take effect after the daemon restarts; the
+current WebSocket protocol and endpoint remain unchanged. Startup logs report
+only the selected loopback or LAN mode and address/port, never configuration
+contents or credentials. Non-loopback listeners now require valid TLS.
+
+Existing phone users connecting over a LAN must add `"allow_lan": true` to the
+standalone `deckboard_config.json` top-level object, provide local certificate
+and key paths via `KDEDECK_TLS_CERT_FILE` and `KDEDECK_TLS_KEY_FILE`, and restart
+the daemon. Missing, incomplete, malformed, or mismatched TLS credentials stop
+startup before a listener is opened. There is no plaintext LAN fallback.
+Loopback remains HTTP/WS when neither TLS variable is set, or HTTPS/WSS when
+both valid variables are supplied. Invalid explicit TLS never downgrades even
+on loopback. Certificate paths are not board settings and are not sent to clients.
+
+See [TLS setup](security/tls-setup.md). Certificate provisioning and client trust
+on real devices are still required; Flutter currently only supports its legacy
+plain WebSocket flow and needs a separate WSS/trust implementation.
 
 ## Connection lifecycle
 
@@ -37,8 +68,9 @@ response for malformed JSON.
    config changes. The server broadcasts
    `config_updated` and `state_update` to all connected clients as applicable.
 5. A disconnect removes the socket's in-memory auth association. Bearer
-   sessions remain valid for reconnect until expiry or revocation. The Flutter client retries after four
-   seconds; the web configurator does not automatically reconnect.
+   sessions remain valid for reconnect until expiry or revocation. The Flutter
+   client retries after four seconds, and the web configurator retries after a
+   short delay and re-authenticates with its stored bearer token.
 
 ### Authentication messages
 
@@ -49,6 +81,19 @@ The initial challenge is intentionally minimal:
 ```
 
 Pair with the local one-time code:
+
+Start the standalone daemon in an interactive terminal with
+`dart run bin/backend.dart --pair` (or `./kdedeck_daemon --pair`). Both stdin and
+stdout must be terminals; redirects/pipes are refused before startup. Only after
+successful startup is a new code displayed directly in that terminal. In the
+same running terminal, type `pair` and Enter to issue a new code for another
+device or after expiry. Each issuance invalidates the old code, not active tokens.
+Normal startup creates no pairing code. No HTTP/WebSocket request issues or
+reveals a code. The first paired device still receives `configAdmin` privileges.
+
+The terminal is a sensitive local display: do not use terminal recording or share
+screenshots of it. Background/tray mode has no pairing display yet; use this
+foreground workflow and do not start a second daemon on an occupied port.
 
 ```json
 { "type": "authenticate", "pairing_code": "<pairing-code>" }
@@ -74,6 +119,40 @@ bounded response without echoing credentials or request payloads:
 ```json
 { "type": "auth_error", "code": "invalid_credentials" }
 ```
+
+The standalone daemon also limits failed `authenticate` frames per WebSocket
+peer address. The default policy accepts five failed attempts, then returns
+`{ "type": "auth_error", "code": "rate_limited" }` for that address for one
+minute. The rate-limited response is bounded and never echoes a token, pairing
+code, or request payload. A successful pairing or token authentication clears
+that peer's failure state. The limiter applies only while a socket is not
+authenticated; it does not interrupt existing authenticated sessions or their
+normal action/configuration requests.
+
+The standalone backend keeps bearer sessions in memory and bounds the active
+session table as described below. Manager revocation immediately clears affected
+standalone sockets and closes them with WebSocket code 1008 and a generic
+`Session invalid` reason. Other valid sessions remain connected. Administrative
+revocation UI is not implemented yet.
+
+The standalone backend bounds the active
+session table to 100 sessions by default. Expired sessions are removed
+opportunistically and before a new pairing is issued. The session manager also
+supports administrative revoke-all and revoke-by-role operations; these
+operations return counts and never expose tokens. A pairing attempt at capacity
+is rejected with the bounded `{ "type": "auth_error", "code":
+"session_capacity" }` response without consuming the pairing code. Invalid
+pairing codes and invalid bearer tokens continue to return the bounded
+`invalid_credentials` response. Once an administrator revokes a session, the
+retained pairing code can be used for a new session.
+
+The standalone web configurator waits for `auth_required` before sending any
+privileged request. It prompts for the one-time pairing code when no session is
+available, then stores the returned bearer token under `kdedeck.authToken` in
+browser `sessionStorage` and `localStorage` for reconnects. An invalid saved
+token clears both storage entries and returns the UI to the pairing prompt.
+Installed-app discovery begins only after `init_state` has been received, and
+configuration saves remain gated on the authenticated WebSocket session.
 
 For this first standalone-server slice, successful bootstrap pairing is always
 assigned `configAdmin` for compatibility. Any caller-supplied role field is
@@ -181,16 +260,26 @@ is therefore not a Windows/macOS system-control implementation
 }
 ```
 
-The config is a free-form JSON map in transit. The common logical schema is a
-top-level `boards` array; board fields are `id`, `title`, `grid_columns`,
-`grid_rows`, and `items`; item fields commonly include `id`, `title`, `type`,
-`action`, `payload`, `icon`, `span_cols`, `span_rows`, `grid_x`, and `grid_y`.
-Optional UI fields include `icon_base64` and `system_icon_path`.
+The standalone server accepts a strict JSON map with a top-level `boards` list.
+Boards require non-empty unique `id` values and an `items` list; grid dimensions
+and item spans/coordinates must be positive integers within the board. Item
+fields commonly include `id`, `title`, `type`, `action`, `payload`, `icon`,
+`span_cols`, `span_rows`, `grid_x`, and `grid_y`. Optional UI fields include
+`icon_base64` data URLs and `system_icon_path` references. Existing desktop-app
+payloads, slider types/spans, and safe actions (`launch_app`, `open_url`, audio,
+`mpris_action`, `kde_action`, and `clock_widget`) remain supported.
 
-On the standalone server, `_validateConfig` forces volume/brightness sliders
-to `1x4`, clamps spans to the board, clamps coordinates, writes the JSON file,
-then broadcasts `config_updated`. On the embedded server, the map is written
-to preferences and broadcast without that validator. See
+The validator also bounds board/item counts, IDs, titles, payloads, icon data,
+nesting, and serialized size; rejects non-finite/fractional values, malformed
+maps/lists, duplicate IDs, unsafe URLs/launch syntax, and unknown action names.
+Rejected saves return only `{ "type": "config_error", "code":
+"invalid_config" }`; the submitted config is never echoed. On the standalone
+server, validation completes before active state changes. Valid writes go to a
+temporary file and atomically replace `deckboard_config.json`; the prior valid
+file is retained as the bounded `deckboard_config.json.bak`. Startup validates
+the primary, then the backup, and otherwise uses the safe default. A failed or
+invalid save leaves the active config unchanged. The embedded server remains a
+separate implementation and is not changed by this step. See
 [`dart_server_service.dart`](../deckboard_daemon/backend/lib/dart_server_service.dart#L177-L187),
 [`dart_server_service.dart`](../deckboard_daemon/backend/lib/dart_server_service.dart#L196-L225),
 and [`services/dart_server_service.dart`](../kdedeck_mobile/lib/services/dart_server_service.dart#L140-L150).
@@ -215,9 +304,10 @@ requesting socket with `system_apps_list`:
 
 On Linux, apps come from `.desktop` entries under system, user, and Flatpak
 directories, with Snap entries added when `snap list` succeeds. Windows and
-macOS branches are TODO. The web editor requests this at connection and when
-opening an item editor ([`app.js`](../deckboard_daemon/frontend/app.js#L19-L24),
-[`app.js`](../deckboard_daemon/frontend/app.js#L750-L752)).
+macOS branches are TODO. The web editor requests this after authenticated
+`init_state` and when opening an item editor
+([`app.js`](../deckboard_daemon/frontend/app.js#L196),
+[`app.js`](../deckboard_daemon/frontend/app.js#L920-L927)).
 
 ### Messages currently sent but not implemented by the server
 

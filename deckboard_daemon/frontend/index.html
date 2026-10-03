@@ -83,6 +83,24 @@
         </div>
     </div>
 
+    <!-- Modal for standalone-server pairing -->
+    <div id="auth-modal" class="modal auth-modal" aria-hidden="true">
+        <div class="modal-content">
+            <h2>Pair with Deckboard</h2>
+            <p class="auth-hint">Enter the one-time pairing code shown by the standalone server.</p>
+            <form id="auth-form">
+                <div class="form-group">
+                    <label for="pairing-code">Pairing code</label>
+                    <input type="password" id="pairing-code" autocomplete="one-time-code" spellcheck="false">
+                </div>
+                <p id="auth-error" class="auth-error" role="alert" aria-live="polite"></p>
+                <div class="modal-actions">
+                    <button type="submit" class="btn-primary">Connect</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Modal for adding/editing buttons -->
     <div id="editor-modal" class="modal">
         <div class="modal-content">
