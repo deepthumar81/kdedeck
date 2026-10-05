@@ -1,13 +1,14 @@
 import 'dart:convert';
 import 'dart:math';
 
-/// In-memory pairing and bearer-session state for the standalone Dart backend.
+import 'session_store.dart';
+
+/// Pairing and bearer-session state for the standalone Dart backend.
 ///
 /// The pairing code is consumed after a successful pairing and expires after a
 /// short period. Session tokens are random bearer credentials and are never
-/// included in diagnostic output. Persistence, secure client-side credential
-/// storage, and embedded-client wiring remain outside this standalone-server
-/// slice.
+/// included in diagnostic output. An optional store persists fingerprints only;
+/// server wiring and secure client-side storage remain separate work.
 enum AuthRole { viewer, control, configAdmin }
 
 /// Operations that can be authorized by an [AuthSession].
@@ -16,7 +17,11 @@ enum AuthCapability { view, control, configAdmin }
 /// Why a pairing attempt did not produce a session.
 ///
 /// The values are intentionally bounded and contain no credential details.
-enum AuthAuthenticationFailure { invalidCredentials, capacityReached }
+enum AuthAuthenticationFailure {
+  invalidCredentials,
+  capacityReached,
+  persistenceUnavailable,
+}
 
 extension AuthRolePermissions on AuthRole {
   /// The capabilities granted by this role.
@@ -87,7 +92,7 @@ class AuthAuthenticationResult {
       'AuthAuthenticationResult(status: ${succeeded ? 'success' : failure})';
 }
 
-/// Manages a one-time pairing code and in-memory bearer sessions.
+/// Manages a one-time pairing code and optionally durable bearer sessions.
 class AuthSessionManager {
   AuthSessionManager({
     Duration pairingCodeLifetime = const Duration(minutes: 5),
@@ -97,11 +102,13 @@ class AuthSessionManager {
     bool issueCodeOnCreate = true,
     DateTime Function()? clock,
     Random? random,
+    SessionStore? sessionStore,
   }) : _pairingCodeLifetime = pairingCodeLifetime,
        _sessionLifetime = sessionLifetime,
        _maxActiveSessions = maxActiveSessions,
        _clock = clock ?? (() => DateTime.now().toUtc()),
-       _random = random ?? Random.secure() {
+       _random = random ?? Random.secure(),
+       _sessionStore = sessionStore {
     if (pairingCodeLifetime <= Duration.zero) {
       throw ArgumentError.value(
         pairingCodeLifetime,
@@ -124,6 +131,21 @@ class AuthSessionManager {
       );
     }
 
+    if (_sessionStore != null) {
+      try {
+        final restored = _sessionStore.read(maxSessions: _maxActiveSessions);
+        final now = _now();
+        for (final record in restored) {
+          if (record.expiresAt.isAfter(now)) {
+            _sessions[record.fingerprint] = record;
+          }
+        }
+        if (_sessions.length != restored.length) _persist();
+      } catch (_) {
+        _failClosed();
+      }
+    }
+
     if (pairingCode != null || issueCodeOnCreate) {
       issuePairingCode(code: pairingCode);
     }
@@ -133,7 +155,7 @@ class AuthSessionManager {
   static const _sessionTokenByteLength = 32;
   static const _generatedPairingCodeLength = 12;
 
-  /// Safe default bound for the in-memory bearer-session table.
+  /// Safe default bound for the bearer-session table.
   static const defaultMaxActiveSessions = 100;
 
   final Duration _pairingCodeLifetime;
@@ -141,8 +163,15 @@ class AuthSessionManager {
   final int _maxActiveSessions;
   final DateTime Function() _clock;
   final Random _random;
-  final Map<String, AuthSession> _sessions = <String, AuthSession>{};
+  final SessionStore? _sessionStore;
+  final Map<String, StoredSession> _sessions = <String, StoredSession>{};
+  final Map<String, AuthSession> _liveSessions = <String, AuthSession>{};
   final Set<void Function()> _revocationListeners = {};
+  bool _persistenceHealthy = true;
+
+  /// False after a store read or write fails; callers must not start a
+  /// listener backed by a manager that could not restore its sessions.
+  bool get persistenceHealthy => _persistenceHealthy;
 
   String? _pairingCode;
   DateTime? _pairingCodeExpiresAt;
@@ -206,6 +235,11 @@ class AuthSessionManager {
     final now = _now();
     _removeExpiredSessions(now);
     _expirePairingCodeIfNeeded(now);
+    if (!_persistenceHealthy) {
+      return const AuthAuthenticationResult.failure(
+        AuthAuthenticationFailure.persistenceUnavailable,
+      );
+    }
     final expectedCode = _pairingCode;
     if (expectedCode == null || !_constantTimeEquals(code, expectedCode)) {
       return const AuthAuthenticationResult.failure(
@@ -218,16 +252,28 @@ class AuthSessionManager {
       );
     }
 
-    _pairingCode = null;
-    _pairingCodeExpiresAt = null;
-
     final session = AuthSession(
       token: _generateUniqueSessionToken(),
       role: role,
       issuedAt: now,
       expiresAt: now.add(_sessionLifetime),
     );
-    _sessions[session.token] = session;
+    final fingerprint = sessionTokenFingerprint(session.token);
+    final updated = Map<String, StoredSession>.of(_sessions);
+    updated[fingerprint] = StoredSession(
+      fingerprint,
+      role.name,
+      session.issuedAt,
+      session.expiresAt,
+    );
+    if (!_commit(updated)) {
+      return const AuthAuthenticationResult.failure(
+        AuthAuthenticationFailure.persistenceUnavailable,
+      );
+    }
+    _liveSessions[fingerprint] = session;
+    _pairingCode = null;
+    _pairingCodeExpiresAt = null;
     return AuthAuthenticationResult.success(session);
   }
 
@@ -244,12 +290,23 @@ class AuthSessionManager {
   }) {
     if (token.isEmpty) return null;
 
-    final session = _sessions[token];
-    if (session == null) return null;
-    if (session.isExpired(_now())) {
-      _sessions.remove(token);
+    if (!_persistenceHealthy) return null;
+    final fingerprint = sessionTokenFingerprint(token);
+    final record = _sessions[fingerprint];
+    if (record == null) return null;
+    if (!record.expiresAt.isAfter(_now())) {
+      _removeExpiredSessions(_now());
       return null;
     }
+    final session = _liveSessions.putIfAbsent(
+      fingerprint,
+      () => AuthSession(
+        token: token,
+        role: AuthRole.values.byName(record.role),
+        issuedAt: record.issuedAt,
+        expiresAt: record.expiresAt,
+      ),
+    );
     if (requiredRole != null && !session.hasRole(requiredRole)) return null;
     if (requiredCapability != null &&
         !session.hasCapability(requiredCapability)) {
@@ -278,9 +335,12 @@ class AuthSessionManager {
 
   /// Revokes [token]. Returns false when no active session matched it.
   bool revokeToken(String token) {
-    if (validateToken(token) == null || _sessions.remove(token) == null) {
+    if (validateToken(token) == null) {
       return false;
     }
+    final updated = Map<String, StoredSession>.of(_sessions)
+      ..remove(sessionTokenFingerprint(token));
+    if (!_commit(updated)) return false;
     _notifyRevocation();
     return true;
   }
@@ -289,7 +349,7 @@ class AuthSessionManager {
   int revokeAllSessions() {
     _removeExpiredSessions(_now());
     final revokedCount = _sessions.length;
-    _sessions.clear();
+    if (revokedCount > 0 && !_commit({})) return 0;
     if (revokedCount > 0) _notifyRevocation();
     return revokedCount;
   }
@@ -304,13 +364,14 @@ class AuthSessionManager {
   }) {
     final now = _now();
     _removeExpiredSessions(now);
-    final before = _sessions.length;
-    _sessions.removeWhere(
+    final updated = Map<String, StoredSession>.of(_sessions);
+    updated.removeWhere(
       (_, session) => includeMorePrivileged
-          ? session.role.satisfies(role)
-          : session.role == role,
+          ? AuthRole.values.byName(session.role).satisfies(role)
+          : session.role == role.name,
     );
-    final revokedCount = before - _sessions.length;
+    final revokedCount = _sessions.length - updated.length;
+    if (revokedCount > 0 && !_commit(updated)) return 0;
     if (revokedCount > 0) _notifyRevocation();
     return revokedCount;
   }
@@ -337,7 +398,45 @@ class AuthSessionManager {
   }
 
   void _removeExpiredSessions(DateTime now) {
-    _sessions.removeWhere((_, session) => session.isExpired(now));
+    if (!_persistenceHealthy) return;
+    final updated = Map<String, StoredSession>.of(_sessions)
+      ..removeWhere((_, session) => !session.expiresAt.isAfter(now));
+    if (updated.length != _sessions.length) _commit(updated);
+  }
+
+  void _persist() {
+    _sessionStore?.write(
+      _sessions.values.toList(),
+      maxSessions: _maxActiveSessions,
+    );
+  }
+
+  bool _commit(Map<String, StoredSession> updated) {
+    if (!_persistenceHealthy) return false;
+    try {
+      _sessionStore?.write(
+        updated.values.toList(),
+        maxSessions: _maxActiveSessions,
+      );
+      _sessions
+        ..clear()
+        ..addAll(updated);
+      _liveSessions.removeWhere(
+        (fingerprint, _) => !updated.containsKey(fingerprint),
+      );
+      return true;
+    } catch (_) {
+      _failClosed();
+      return false;
+    }
+  }
+
+  void _failClosed() {
+    final hadSessions = _sessions.isNotEmpty;
+    _persistenceHealthy = false;
+    _sessions.clear();
+    _liveSessions.clear();
+    if (hadSessions) _notifyRevocation();
   }
 
   String _generatePairingCode() {
@@ -357,7 +456,7 @@ class AuthSessionManager {
         growable: false,
       );
       token = base64Url.encode(bytes).replaceAll('=', '');
-    } while (_sessions.containsKey(token));
+    } while (_sessions.containsKey(sessionTokenFingerprint(token)));
     return token;
   }
 

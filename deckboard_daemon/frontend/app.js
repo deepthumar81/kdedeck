@@ -77,6 +77,17 @@ function setConnectionStatus(text, className) {
     statusEl.className = className;
 }
 
+function createTextElement(tagName, className, text) {
+    const element = document.createElement(tagName);
+    if (className) element.className = className;
+    element.textContent = text == null ? '' : String(text);
+    return element;
+}
+
+function createMaterialIcon(iconName, className = '') {
+    return createTextElement('span', `material-symbols-outlined${className ? ` ${className}` : ''}`, iconName);
+}
+
 function showAuthModal(message = '') {
     authModal.classList.add('show');
     authModal.setAttribute('aria-hidden', 'false');
@@ -240,10 +251,10 @@ function updateManualSaveBtn() {
     if (!autoSave) {
         if (isDirty) {
             manualSaveBtn.style.backgroundColor = 'var(--success-color)';
-            manualSaveBtn.innerHTML = '<span class="material-symbols-outlined">save</span> Save & Apply *';
+            manualSaveBtn.replaceChildren(createMaterialIcon('save'), document.createTextNode(' Save & Apply *'));
         } else {
             manualSaveBtn.style.backgroundColor = 'var(--accent-color)';
-            manualSaveBtn.innerHTML = '<span class="material-symbols-outlined">save</span> Save & Apply';
+            manualSaveBtn.replaceChildren(createMaterialIcon('save'), document.createTextNode(' Save & Apply'));
         }
     }
 }
@@ -282,15 +293,14 @@ document.getElementById('add-board-btn').addEventListener('click', () => {
 function renderSidebar() {
     if (!configData || !configData.boards) return;
     
-    boardListEl.innerHTML = '';
+    boardListEl.replaceChildren();
     configData.boards.forEach((board, idx) => {
         const item = document.createElement('div');
         item.className = `board-item ${idx === activeBoardIdx ? 'active' : ''}`;
-        
-        item.innerHTML = `
-            <span class="material-symbols-outlined">layers</span>
-            <span class="title">${board.title || 'Board'}</span>
-        `;
+        item.append(
+            createMaterialIcon('layers'),
+            createTextElement('span', 'title', board.title || 'Board')
+        );
         
         if (idx === activeBoardIdx) {
             const actionsDiv = document.createElement('div');
@@ -406,7 +416,7 @@ function renderGrid() {
     
     matrixEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     matrixEl.style.gridTemplateRows = `repeat(${rows}, 100px)`; 
-    matrixEl.innerHTML = '';
+    matrixEl.replaceChildren();
 
     occupied = Array(rows).fill().map(() => Array(cols).fill(false));
 
@@ -453,7 +463,7 @@ function renderGrid() {
                 emptyEl.className = 'deck-tile-empty';
                 emptyEl.style.gridRow = `${i + 1} / span 1`;
                 emptyEl.style.gridColumn = `${j + 1} / span 1`;
-                emptyEl.innerHTML = '<span class="material-symbols-outlined">add</span>';
+                emptyEl.appendChild(createMaterialIcon('add'));
                 emptyEl.onclick = () => openEditor(null, j, i);
                 setupDropTarget(emptyEl, j, i);
                 matrixEl.appendChild(emptyEl);
@@ -481,28 +491,72 @@ function createTile(item, idx, r, c, spanRows, spanCols) {
     if (item.type === "brightness_slider") color = '#F59E0B';
 
     if (item.action === 'clock_widget') {
-        el.innerHTML = `<div class="tile-title" style="color: ${color}; font-size: ${1 + (spanCols * 0.2)}rem; font-weight: bold; margin-top: auto; margin-bottom: auto;" id="clock_${item.id}">--:--</div>`;
+        const timeEl = createTextElement('div', 'tile-title', '--:--');
+        const clockId = `clock_${item.id}`;
+        timeEl.id = clockId;
+        timeEl.style.color = color;
+        timeEl.style.fontSize = `${1 + (spanCols * 0.2)}rem`;
+        timeEl.style.fontWeight = 'bold';
+        timeEl.style.marginTop = 'auto';
+        timeEl.style.marginBottom = 'auto';
+        el.appendChild(timeEl);
         const updateTime = () => {
-            const timeEl = document.getElementById(`clock_${item.id}`);
-            if (timeEl) {
+            const currentTimeEl = document.getElementById(clockId);
+            if (currentTimeEl) {
                 const now = new Date();
-                timeEl.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+                currentTimeEl.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
             }
         };
         updateTime(); // Call instantly
         setInterval(updateTime, 1000);
     } else if (item.icon_base64) {
-        el.innerHTML = `<img src="${item.icon_base64}" style="width: 100%; height: 100%; object-fit: contain; border-radius: 8px;">`;
-        if (item.title) el.innerHTML += `<div class="tile-title" style="color: ${color}; background: rgba(0,0,0,0.5); padding: 2px 4px; border-radius: 4px; position: absolute; bottom: 5px;">${item.title}</div>`;
+        const image = document.createElement('img');
+        image.src = item.icon_base64;
+        image.style.width = '100%';
+        image.style.height = '100%';
+        image.style.objectFit = 'contain';
+        image.style.borderRadius = '8px';
+        el.appendChild(image);
+        if (item.title) {
+            const title = createTextElement('div', 'tile-title', item.title);
+            title.style.color = color;
+            title.style.background = 'rgba(0,0,0,0.5)';
+            title.style.padding = '2px 4px';
+            title.style.borderRadius = '4px';
+            title.style.position = 'absolute';
+            title.style.bottom = '5px';
+            el.appendChild(title);
+        }
     } else if (item.system_icon_path) {
-        el.innerHTML = `<img src="/system_icons?path=${encodeURIComponent(item.system_icon_path)}" style="width: 60%; height: 60%; object-fit: contain; border-radius: 8px;">`;
-        if (item.title) el.innerHTML += `<div class="tile-title" style="color: ${color}">${item.title}</div>`;
+        const image = document.createElement('img');
+        image.src = `/system_icons?path=${encodeURIComponent(item.system_icon_path)}`;
+        image.style.width = '60%';
+        image.style.height = '60%';
+        image.style.objectFit = 'contain';
+        image.style.borderRadius = '8px';
+        el.appendChild(image);
+        if (item.title) {
+            const title = createTextElement('div', 'tile-title', item.title);
+            title.style.color = color;
+            el.appendChild(title);
+        }
     } else {
-        el.innerHTML = `<div class="tile-icon" style="color: ${color}"><span class="material-symbols-outlined">${icon}</span></div><div class="tile-title" style="color: ${color}">${item.title || 'Button'}</div>`;
+        const iconEl = createTextElement('div', 'tile-icon');
+        iconEl.style.color = color;
+        iconEl.appendChild(createMaterialIcon(icon));
+        const title = createTextElement('div', 'tile-title', item.title || 'Button');
+        title.style.color = color;
+        el.append(iconEl, title);
     }
     
     if (item.type === "volume_slider" || item.type === "brightness_slider") {
-        el.innerHTML += `<div class="tile-slider-track"><div class="tile-slider-fill" style="background: ${color}"></div></div>`;
+        const sliderTrack = document.createElement('div');
+        sliderTrack.className = 'tile-slider-track';
+        const sliderFill = document.createElement('div');
+        sliderFill.className = 'tile-slider-fill';
+        sliderFill.style.background = color;
+        sliderTrack.appendChild(sliderFill);
+        el.appendChild(sliderTrack);
     }
 
     el.addEventListener('dragstart', (e) => {
@@ -760,7 +814,7 @@ customPayloadToggle.addEventListener('change', () => {
 let currentSearchFocus = -1;
 
 function renderAppSearchDropdown(query = '') {
-    appSearchResults.innerHTML = '';
+    appSearchResults.replaceChildren();
     currentSearchFocus = -1;
     
     let results = systemApps;
@@ -771,13 +825,15 @@ function renderAppSearchDropdown(query = '') {
     if (results.length > 0) {
         results.forEach(app => {
             const li = document.createElement('li');
-            li.innerHTML = `
-                <span class="material-symbols-outlined app-icon">apps</span>
-                <div>
-                    <div class="app-name">${app.name}</div>
-                    <div class="app-payload">${app.payload}</div>
-                </div>
-            `;
+            li.append(
+                createMaterialIcon('apps', 'app-icon'),
+                createTextElement('div', '', '')
+            );
+            const appDetails = li.lastElementChild;
+            appDetails.append(
+                createTextElement('div', 'app-name', app.name),
+                createTextElement('div', 'app-payload', app.payload)
+            );
             li.onclick = () => {
                 appSearchInput.value = app.name;
                 editPayloadApp.value = app.payload;
@@ -791,7 +847,9 @@ function renderAppSearchDropdown(query = '') {
         appSearchResults.classList.add('show');
     } else {
         const li = document.createElement('li');
-        li.innerHTML = `<div><div class="app-name">${systemApps.length === 0 ? "Loading apps..." : "No apps found"}</div></div>`;
+        const message = createTextElement('div', '', '');
+        message.appendChild(createTextElement('div', 'app-name', systemApps.length === 0 ? 'Loading apps...' : 'No apps found'));
+        li.appendChild(message);
         appSearchResults.appendChild(li);
         appSearchResults.classList.add('show');
     }

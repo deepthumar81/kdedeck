@@ -23,36 +23,487 @@ void main() {
     await tempDirectory.delete(recursive: true);
   });
 
-  test('sends only a challenge and rejects unauthenticated requests', () async {
+  test(
+    'accepts WebSocket upgrades without Origin for native clients',
+    () async {
+      final manager = AuthSessionManager(pairingCode: 'pairing-code');
+      server = _newServer(manager, executor, tempDirectory);
+      final client = await _connect(server!);
+      final messages = _MessageReader(client);
+
+      expect(await messages.next(), {'type': 'auth_required'});
+
+      client.add(
+        jsonEncode({'type': 'trigger_action', 'action': 'kde_action'}),
+      );
+      expect(await messages.next(), {
+        'type': 'auth_error',
+        'code': 'authentication_required',
+      });
+      client.add(
+        jsonEncode({
+          'type': 'save_config',
+          'config': {'boards': []},
+        }),
+      );
+      expect(await messages.next(), {
+        'type': 'auth_error',
+        'code': 'authentication_required',
+      });
+      client.add(jsonEncode({'type': 'get_system_apps'}));
+      expect(await messages.next(), {
+        'type': 'auth_error',
+        'code': 'authentication_required',
+      });
+
+      expect(executor.invocations, isEmpty);
+      await messages.close();
+      await client.close();
+    },
+  );
+
+  test(
+    'accepts a same-origin WebSocket Origin before authentication',
+    () async {
+      final manager = AuthSessionManager(pairingCode: 'pairing-code');
+      server = _newServer(manager, executor, tempDirectory);
+      await server!.startServer();
+      final client = await _connect(
+        server!,
+        origin: 'http://127.0.0.1:${server!.port}',
+      );
+      final messages = _MessageReader(client);
+
+      expect(await messages.next(), {'type': 'auth_required'});
+      expect(manager.activeSessionCount, 0);
+
+      await messages.close();
+      await client.close();
+    },
+  );
+
+  test(
+    'rejects a cross-origin WebSocket before upgrade or auth state',
+    () async {
+      var identityLookups = 0;
+      final manager = AuthSessionManager(pairingCode: 'pairing-code');
+      server = _newServer(
+        manager,
+        executor,
+        tempDirectory,
+        maxConnections: 1,
+        clientIdentityResolver: (_) {
+          identityLookups++;
+          return 'test-client';
+        },
+      );
+
+      final response = await _upgradeRequest(
+        server!,
+        origin: 'http://evil.example',
+      );
+      expect(response.statusCode, HttpStatus.forbidden);
+      expect(response.body, 'Forbidden');
+      expect(identityLookups, 0);
+      expect(manager.activeSessionCount, 0);
+
+      await server!.startServer();
+      final survivor = await _connect(
+        server!,
+        origin: 'http://127.0.0.1:${server!.port}',
+      );
+      final messages = _MessageReader(survivor);
+      expect(await messages.next(), {'type': 'auth_required'});
+      await messages.close();
+      await survivor.close();
+    },
+  );
+
+  test('rejects a malformed WebSocket Origin before upgrade', () async {
     final manager = AuthSessionManager(pairingCode: 'pairing-code');
     server = _newServer(manager, executor, tempDirectory);
+
+    final response = await _upgradeRequest(server!, origin: 'not an origin');
+    expect(response.statusCode, HttpStatus.forbidden);
+    expect(response.body, 'Forbidden');
+    expect(manager.activeSessionCount, 0);
+  });
+
+  test('caps sockets before auth while the survivor remains usable', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    server = _newServer(manager, executor, tempDirectory, maxConnections: 1);
+    final survivor = await _connect(server!);
+    final survivorMessages = _MessageReader(survivor);
+    expect(await survivorMessages.next(), {'type': 'auth_required'});
+
+    final rejected = await _connect(server!);
+    final rejectedMessages = _MessageReader(rejected);
+    await rejectedMessages.expectClosedWith('Connection capacity reached');
+
+    survivor.add(
+      jsonEncode({'type': 'authenticate', 'pairing_code': 'pairing-code'}),
+    );
+    expect((await survivorMessages.next())['type'], 'auth_success');
+    await survivorMessages.next();
+    survivor.add(
+      jsonEncode({
+        'type': 'trigger_action',
+        'action': 'launch_app',
+        'payload': '/usr/bin/example',
+      }),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(executor.invocations, hasLength(1));
+
+    await rejectedMessages.close();
+    await rejected.close();
+    await survivorMessages.close();
+    await survivor.close();
+
+    final reconnected = await _connect(server!);
+    final reconnectedMessages = _MessageReader(reconnected);
+    expect(await reconnectedMessages.next(), {'type': 'auth_required'});
+    await reconnectedMessages.close();
+    await reconnected.close();
+  });
+
+  test('rejects message bursts for authenticated clients', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    server = _newServer(
+      manager,
+      executor,
+      tempDirectory,
+      maxMessagesPerWindow: 2,
+      maxActionRequestsPerWindow: 10,
+      rateLimitWindow: const Duration(seconds: 10),
+    );
     final client = await _connect(server!);
     final messages = _MessageReader(client);
-
-    expect(await messages.next(), {'type': 'auth_required'});
-
-    client.add(jsonEncode({'type': 'trigger_action', 'action': 'kde_action'}));
-    expect(await messages.next(), {
-      'type': 'auth_error',
-      'code': 'authentication_required',
-    });
+    await messages.next();
     client.add(
-      jsonEncode({
-        'type': 'save_config',
-        'config': {'boards': []},
-      }),
+      jsonEncode({'type': 'authenticate', 'pairing_code': 'pairing-code'}),
+    );
+    expect((await messages.next())['type'], 'auth_success');
+    await messages.next();
+
+    client.add(jsonEncode({'type': 'noop'}));
+    client.add(jsonEncode({'type': 'get_system_apps'}));
+    expect((await messages.next())['code'], 'rate_limited');
+    expect(executor.invocations, isEmpty);
+
+    await messages.close();
+    await client.close();
+  }, skip: !Platform.isLinux ? 'Linux discovery adapter test' : false);
+
+  test('accepts a text frame exactly at the UTF-8 byte limit', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    final frame = jsonEncode({
+      'type': 'authenticate',
+      'pairing_code': 'pairing-code',
+      'padding': 'é' * 24,
+    });
+    server = _newServer(
+      manager,
+      executor,
+      tempDirectory,
+      maxFrameBytes: utf8.encode(frame).length,
+    );
+    final client = await _connect(server!);
+    final messages = _MessageReader(client);
+    await messages.next();
+
+    client.add(frame);
+    expect((await messages.next())['type'], 'auth_success');
+    expect((await messages.next())['type'], 'init_state');
+
+    await messages.close();
+    await client.close();
+  });
+
+  test('rejects an oversized unauthenticated action before dispatch', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    server = _newServer(manager, executor, tempDirectory, maxFrameBytes: 64);
+    final client = await _connect(server!);
+    final messages = _MessageReader(client);
+    await messages.next();
+
+    client.add(
+      _oversizedJsonFrame({
+        'type': 'trigger_action',
+        'action': 'launch_app',
+        'payload': '/usr/bin/example',
+      }, 64),
     );
     expect(await messages.next(), {
       'type': 'auth_error',
-      'code': 'authentication_required',
+      'code': 'message_too_large',
     });
-    client.add(jsonEncode({'type': 'get_system_apps'}));
+    expect(executor.invocations, isEmpty);
+
+    await messages.close();
+    await client.close();
+  });
+
+  test(
+    'rejects an oversized authenticated config before persistence',
+    () async {
+      final manager = AuthSessionManager(pairingCode: 'pairing-code');
+      server = _newServer(manager, executor, tempDirectory, maxFrameBytes: 128);
+      final client = await _connect(server!);
+      final messages = _MessageReader(client);
+      await messages.next();
+      client.add(
+        jsonEncode({'type': 'authenticate', 'pairing_code': 'pairing-code'}),
+      );
+      await messages.next();
+      await messages.next();
+
+      client.add(
+        _oversizedJsonFrame({
+          'type': 'save_config',
+          'config': {'boards': [], 'name': 'oversized'},
+        }, 128),
+      );
+      expect(await messages.next(), {
+        'type': 'auth_error',
+        'code': 'message_too_large',
+      });
+      expect(
+        await File('${tempDirectory.path}/deckboard_config.json').exists(),
+        isFalse,
+      );
+      expect(executor.invocations, isEmpty);
+
+      await messages.close();
+      await client.close();
+    },
+  );
+
+  test('rejects binary frames with a bounded protocol error', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    server = _newServer(manager, executor, tempDirectory, maxFrameBytes: 64);
+    final client = await _connect(server!);
+    final messages = _MessageReader(client);
+    await messages.next();
+
+    client.add(List<int>.filled(4, 0xff));
     expect(await messages.next(), {
       'type': 'auth_error',
-      'code': 'authentication_required',
+      'code': 'message_too_large',
     });
-
     expect(executor.invocations, isEmpty);
+
+    await messages.close();
+    await client.close();
+  });
+
+  test('closes after repeated oversized-frame violations', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    server = _newServer(
+      manager,
+      executor,
+      tempDirectory,
+      maxFrameBytes: 64,
+      maxOversizedFrameViolations: 2,
+    );
+    final client = await _connect(server!);
+    final messages = _MessageReader(client);
+    await messages.next();
+    final oversized = _oversizedJsonFrame({'type': 'noop'}, 64);
+
+    client.add(oversized);
+    client.add(oversized);
+    expect(await messages.next(), {
+      'type': 'auth_error',
+      'code': 'message_too_large',
+    });
+    expect(await messages.next(), {
+      'type': 'auth_error',
+      'code': 'message_too_large',
+    });
+    await messages.expectClosedWith('Message too large');
+
+    await messages.close();
+    await client.close();
+  });
+
+  test(
+    'an oversized client cannot disrupt a surviving authenticated socket',
+    () async {
+      final manager = AuthSessionManager(pairingCode: 'pairing-code');
+      final session = manager.authenticate(
+        'pairing-code',
+        role: AuthRole.control,
+      )!;
+      server = _newServer(
+        manager,
+        executor,
+        tempDirectory,
+        maxFrameBytes: 256,
+        maxOversizedFrameViolations: 2,
+      );
+      final survivor = await _authenticatedSocket(server!, session.token);
+      final violator = await _connect(server!);
+      final violatorMessages = _MessageReader(violator);
+      await violatorMessages.next();
+      final oversized = _oversizedJsonFrame({'type': 'noop'}, 256);
+      violator.add(oversized);
+      violator.add(oversized);
+      await violatorMessages.next();
+      await violatorMessages.next();
+      await violatorMessages.expectClosedWith('Message too large');
+
+      survivor.socket.add(
+        jsonEncode({
+          'type': 'trigger_action',
+          'action': 'launch_app',
+          'payload': '/usr/bin/example',
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(executor.invocations, hasLength(1));
+
+      await violatorMessages.close();
+      await violator.close();
+      await survivor.messages.close();
+      await survivor.socket.close();
+    },
+  );
+
+  test('rejects action bursts without invoking the executor', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    server = _newServer(
+      manager,
+      executor,
+      tempDirectory,
+      maxMessagesPerWindow: 10,
+      maxActionRequestsPerWindow: 1,
+      rateLimitWindow: const Duration(seconds: 10),
+    );
+    final client = await _connect(server!);
+    final messages = _MessageReader(client);
+    await messages.next();
+    client.add(
+      jsonEncode({'type': 'authenticate', 'pairing_code': 'pairing-code'}),
+    );
+    await messages.next();
+    await messages.next();
+
+    final action = jsonEncode({
+      'type': 'trigger_action',
+      'action': 'launch_app',
+      'payload': '/usr/bin/example',
+    });
+    client.add(action);
+    client.add(action);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(executor.invocations, hasLength(1));
+    expect((await messages.next())['code'], 'rate_limited');
+
+    await messages.close();
+    await client.close();
+  });
+
+  test('resets message and action windows using the injected clock', () async {
+    final clock = _FakeClock(DateTime.utc(2026, 1, 1));
+    final manager = AuthSessionManager(
+      pairingCode: 'pairing-code',
+      clock: clock.now,
+    );
+    server = _newServer(
+      manager,
+      executor,
+      tempDirectory,
+      maxMessagesPerWindow: 2,
+      maxActionRequestsPerWindow: 1,
+      rateLimitWindow: const Duration(seconds: 10),
+      clock: clock.now,
+    );
+    final client = await _connect(server!);
+    final messages = _MessageReader(client);
+    await messages.next();
+    client.add(
+      jsonEncode({'type': 'authenticate', 'pairing_code': 'pairing-code'}),
+    );
+    await messages.next();
+    await messages.next();
+
+    final action = jsonEncode({
+      'type': 'trigger_action',
+      'action': 'launch_app',
+      'payload': '/usr/bin/example',
+    });
+    client.add(action);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(executor.invocations, hasLength(1));
+
+    client.add(action);
+    expect((await messages.next())['code'], 'rate_limited');
+    clock.advance(const Duration(seconds: 10));
+    client.add(action);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(executor.invocations, hasLength(2));
+
+    await messages.close();
+    await client.close();
+  });
+
+  test(
+    'closes after repeated rate-limit violations with a bounded reason',
+    () async {
+      final manager = AuthSessionManager(pairingCode: 'pairing-code');
+      server = _newServer(
+        manager,
+        executor,
+        tempDirectory,
+        maxMessagesPerWindow: 1,
+        maxRateLimitViolations: 2,
+        rateLimitWindow: const Duration(seconds: 10),
+      );
+      final client = await _connect(server!);
+      final messages = _MessageReader(client);
+      await messages.next();
+      client.add(
+        jsonEncode({'type': 'authenticate', 'pairing_code': 'pairing-code'}),
+      );
+      await messages.next();
+      await messages.next();
+
+      client.add(jsonEncode({'type': 'noop'}));
+      client.add(jsonEncode({'type': 'noop'}));
+      expect((await messages.next())['code'], 'rate_limited');
+      expect((await messages.next())['code'], 'rate_limited');
+      await messages.expectClosedWith('Rate limit exceeded');
+
+      await messages.close();
+      await client.close();
+    },
+  );
+
+  test('unauthenticated action bursts cannot bypass either limiter', () async {
+    final manager = AuthSessionManager(pairingCode: 'pairing-code');
+    server = _newServer(
+      manager,
+      executor,
+      tempDirectory,
+      maxMessagesPerWindow: 10,
+      maxActionRequestsPerWindow: 1,
+      rateLimitWindow: const Duration(seconds: 10),
+    );
+    final client = await _connect(server!);
+    final messages = _MessageReader(client);
+    await messages.next();
+    final action = jsonEncode({
+      'type': 'trigger_action',
+      'action': 'launch_app',
+      'payload': '/usr/bin/example',
+    });
+    client.add(action);
+    expect((await messages.next())['code'], 'authentication_required');
+    client.add(action);
+    expect((await messages.next())['code'], 'rate_limited');
+    expect(executor.invocations, isEmpty);
+
     await messages.close();
     await client.close();
   });
@@ -578,6 +1029,15 @@ DartServerService _newServer(
   Directory tempDirectory, {
   AuthRateLimiter? authRateLimiter,
   String Function(HttpRequest request)? clientIdentityResolver,
+  int maxConnections = 100,
+  int maxFrameBytes = DartServerService.defaultMaxFrameBytes,
+  int maxOversizedFrameViolations =
+      DartServerService.defaultMaxOversizedFrameViolations,
+  int maxMessagesPerWindow = 120,
+  int maxActionRequestsPerWindow = 30,
+  Duration rateLimitWindow = const Duration(seconds: 1),
+  int maxRateLimitViolations = 3,
+  DateTime Function()? clock,
 }) => DartServerService.forTesting(
   port: 0,
   authSessionManager: manager,
@@ -585,11 +1045,68 @@ DartServerService _newServer(
   clientIdentityResolver: clientIdentityResolver,
   commandExecutor: executor,
   configPath: '${tempDirectory.path}/deckboard_config.json',
+  maxConnections: maxConnections,
+  maxFrameBytes: maxFrameBytes,
+  maxOversizedFrameViolations: maxOversizedFrameViolations,
+  maxMessagesPerWindow: maxMessagesPerWindow,
+  maxActionRequestsPerWindow: maxActionRequestsPerWindow,
+  rateLimitWindow: rateLimitWindow,
+  maxRateLimitViolations: maxRateLimitViolations,
+  clock: clock,
 );
 
-Future<WebSocket> _connect(DartServerService server) async {
+Future<WebSocket> _connect(DartServerService server, {String? origin}) async {
   if (!server.isRunning) await server.startServer();
-  return WebSocket.connect('ws://127.0.0.1:${server.port}/ws');
+  return WebSocket.connect(
+    'ws://127.0.0.1:${server.port}/ws',
+    headers: origin == null ? null : {'Origin': origin},
+  );
+}
+
+Future<_UpgradeResponse> _upgradeRequest(
+  DartServerService server, {
+  required String origin,
+}) async {
+  if (!server.isRunning) await server.startServer();
+  final client = HttpClient();
+  try {
+    final request = await client.getUrl(
+      Uri.parse('http://127.0.0.1:${server.port}/ws'),
+    );
+    request.headers
+      ..set(HttpHeaders.connectionHeader, 'Upgrade')
+      ..set(HttpHeaders.upgradeHeader, 'websocket')
+      ..set('Sec-WebSocket-Version', '13')
+      ..set('Sec-WebSocket-Key', base64Encode(List<int>.filled(16, 7)))
+      ..set('Origin', origin);
+    final response = await request.close();
+    final body = await utf8.decoder.bind(response).join();
+    return _UpgradeResponse(response.statusCode, body);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+String _oversizedJsonFrame(Map<String, dynamic> value, int maxBytes) {
+  final minimumFrame = jsonEncode({...value, 'padding': ''});
+  if (utf8.encode(minimumFrame).length > maxBytes) return minimumFrame;
+  return _jsonFrameWithExactUtf8Bytes(value, maxBytes + 1);
+}
+
+String _jsonFrameWithExactUtf8Bytes(
+  Map<String, dynamic> value,
+  int byteLength,
+) {
+  final emptyPadding = jsonEncode({...value, 'padding': ''});
+  final paddingBytes = byteLength - utf8.encode(emptyPadding).length;
+  if (paddingBytes < 0) {
+    throw ArgumentError.value(byteLength, 'byteLength', 'frame is too small');
+  }
+  final frame = jsonEncode({...value, 'padding': 'a' * paddingBytes});
+  if (utf8.encode(frame).length != byteLength) {
+    throw StateError('Could not construct an exact-size JSON frame');
+  }
+  return frame;
 }
 
 Future<({WebSocket socket, _MessageReader messages})> _authenticatedSocket(
@@ -617,15 +1134,26 @@ final class _MessageReader {
   }
 
   Future<void> expectClosed() async {
+    await expectClosedWith('Session invalid');
+  }
+
+  Future<void> expectClosedWith(String reason) async {
     expect(
       await _iterator.moveNext().timeout(const Duration(seconds: 5)),
       isFalse,
     );
     expect(socket.closeCode, WebSocketStatus.policyViolation);
-    expect(socket.closeReason, 'Session invalid');
+    expect(socket.closeReason, reason);
   }
 
   Future<void> close() => _iterator.cancel();
+}
+
+final class _UpgradeResponse {
+  const _UpgradeResponse(this.statusCode, this.body);
+
+  final int statusCode;
+  final String body;
 }
 
 final class _FakeClock {

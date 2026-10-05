@@ -11,12 +11,38 @@ security or UI/platform parity.
 - [x] Revalidate delayed app-discovery responses (Step 17).
 - [x] Promptly disconnect manager-revoked standalone sessions (Step 18).
 - [ ] Audit other delayed operations and implement local administrative controls.
-- [ ] Bound rate-limiter identity storage, expire stale entries, add global limits
-  and prevent connection/action/request floods.
-- [ ] Frame/JSON decode limits before allocation; HTTP limits and origin policy;
-  static path containment and frontend XSS-safe rendering.
+- [x] Bound rate-limiter identity storage and expire stale entries.
+- [x] Add bounded standalone WebSocket connections and per-client message/action
+  flood protection.
+- [x] Bound standalone WebSocket frame bytes and reject binary frames before JSON
+  parsing.
+- [x] Add standalone HTTP security headers and a no-store cache policy for
+  frontend, icon, missing, and error responses.
+- [x] Validate browser WebSocket Origin against the same HTTP scheme/host/port;
+  preserve Origin-less native clients and reject malformed/cross-origin upgrades.
+- [x] Bound standalone HTTP request targets, normalized header bytes/count, and
+  request bodies before route handling.
+- [x] Replace frontend user-controlled HTML interpolation with text-safe DOM
+  rendering for board/item titles, installed-app labels, icons, and imported
+  configuration values.
 - [ ] Device-scoped credential persistence with protected storage, rotation,
   local recovery, safe diagnostics, and administrative revocation UI.
+- [x] Add opt-in backend session-store seam with SHA-256 token fingerprints,
+  private atomic file storage, bounded restore, and restart/failure tests.
+- [x] Refuse stale restoration when interrupted writes leave a pending marker
+  (Step 28); tested for single/role/all revocation.
+- [x] Add confirmed terminal-only offline session-store reset/re-pair recovery
+  (Step 29); never clear marker before committing an empty snapshot.
+- [x] Add exclusive FileSessionStore ownership and reset contention protection;
+  Linux subprocess release/exit tested (Step 30).
+- [x] Integrate injected store acquisition/release/restart with standalone
+  lifecycle; production persistence unchanged (Step 31).
+- [ ] Wire production persistence only with an explicit policy for
+  marker-creation/storage failure. Verify
+   directory durability, Windows replacement/ACLs, cross-platform locking and
+   multi-isolate ownership. Audit in-flight operation shutdown ordering.
+- [ ] Stabilize lock-probe subprocess tests under parallel suite load; serial
+  backend suite passes, but one parallel probe timed out during Step 31.
 - [ ] Local approval and role selection instead of always pairing as configAdmin;
   background/tray local pairing without logging codes.
 - [ ] Sensitive power/session action authorization and confirmation.
@@ -50,4 +76,5 @@ security or UI/platform parity.
 Completed slices so far: documentation baseline, test/executor seams, standalone
 auth gates, per-peer failed-attempt throttling, config validation/backup, bounded
 session manager, capacity response, safe bind defaults, TLS listener, and explicit
-foreground terminal pairing. Automated checks do not replace device/browser QA.
+foreground terminal pairing, and an opt-in persisted session-store boundary.
+Automated checks do not replace device/browser QA.

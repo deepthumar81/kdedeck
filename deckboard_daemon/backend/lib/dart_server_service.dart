@@ -2,29 +2,74 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as path;
+
 import 'app_discovery.dart';
 import 'auth_rate_limiter.dart';
 import 'auth_session_manager.dart';
 import 'command_executor.dart';
 import 'config_validator.dart';
 import 'server_tls.dart';
+import 'session_store.dart';
 import 'system_actions_service.dart';
+import 'websocket_rate_limiter.dart';
 
 class DartServerService {
+  static const int defaultMaxConnections = 100;
+  static const int defaultMaxFrameBytes = 64 * 1024;
+  static const int defaultMaxOversizedFrameViolations = 3;
+  static const int defaultMaxRequestTargetBytes = 8 * 1024;
+  static const int defaultMaxRequestHeaderBytes = 32 * 1024;
+  static const int defaultMaxRequestHeaderCount = 100;
+  static const int defaultMaxRequestBodyBytes = 1024 * 1024;
+  static const String _contentSecurityPolicy =
+      "default-src 'self'; base-uri 'none'; object-src 'none'; "
+      "frame-ancestors 'none'; form-action 'self'; script-src 'self' "
+      "'unsafe-inline'; style-src 'self' 'unsafe-inline' "
+      'https://fonts.googleapis.com; font-src \'self\' '
+      'https://fonts.gstatic.com; img-src \'self\' data:; connect-src \'self\'';
   static final DartServerService _instance = DartServerService._internal();
   factory DartServerService() => _instance;
+
+  static int _validateMaxConnections(int value) {
+    if (value <= 0) {
+      throw ArgumentError.value(
+        value,
+        'maxConnections',
+        'must be greater than zero',
+      );
+    }
+    return value;
+  }
+
+  static int _validatePositiveLimit(int value, String name) {
+    if (value <= 0) {
+      throw ArgumentError.value(value, name, 'must be greater than zero');
+    }
+    return value;
+  }
 
   DartServerService._internal()
     : port = 8484,
       _bindAddress = InternetAddress.loopbackIPv4,
       _bindAddressOverride = null,
       _configPath = 'deckboard_config.json',
+      _frontendRoot = '../frontend',
       _authSessionManager = AuthSessionManager(issueCodeOnCreate: false),
+      _sessionStoreFactory = null,
       _authRateLimiter = AuthRateLimiter(),
       _clientIdentityResolver = _defaultClientIdentity,
       _configValidator = const ConfigValidator(),
       _environment = Platform.environment,
-      _commandExecutor = const ProcessCommandExecutor();
+      _commandExecutor = const ProcessCommandExecutor(),
+      _maxConnections = defaultMaxConnections,
+      _maxFrameBytes = defaultMaxFrameBytes,
+      _maxOversizedFrameViolations = defaultMaxOversizedFrameViolations,
+      _maxRequestTargetBytes = defaultMaxRequestTargetBytes,
+      _maxRequestHeaderBytes = defaultMaxRequestHeaderBytes,
+      _maxRequestHeaderCount = defaultMaxRequestHeaderCount,
+      _maxRequestBodyBytes = defaultMaxRequestBodyBytes,
+      _webSocketRateLimiter = WebSocketRateLimiter();
 
   /// Creates an isolated server for protocol tests.
   ///
@@ -36,18 +81,36 @@ class DartServerService {
     int port = 0,
     InternetAddress? bindAddress,
     String configPath = 'deckboard_config.json',
+    String frontendRoot = '../frontend',
     AuthSessionManager? authSessionManager,
+    FileSessionStore Function()? sessionStoreFactory,
     AuthRateLimiter? authRateLimiter,
     String Function(HttpRequest request)? clientIdentityResolver,
     ConfigLimits? configLimits,
     CommandExecutor? commandExecutor,
     Map<String, String> environment = const {},
+    int maxConnections = defaultMaxConnections,
+    int maxFrameBytes = defaultMaxFrameBytes,
+    int maxOversizedFrameViolations = defaultMaxOversizedFrameViolations,
+    int maxRequestTargetBytes = defaultMaxRequestTargetBytes,
+    int maxRequestHeaderBytes = defaultMaxRequestHeaderBytes,
+    int maxRequestHeaderCount = defaultMaxRequestHeaderCount,
+    int maxRequestBodyBytes = defaultMaxRequestBodyBytes,
+    WebSocketRateLimiter? webSocketRateLimiter,
+    int maxMessagesPerWindow = WebSocketRateLimiter.defaultMaxMessagesPerWindow,
+    int maxActionRequestsPerWindow =
+        WebSocketRateLimiter.defaultMaxActionRequestsPerWindow,
+    Duration rateLimitWindow = WebSocketRateLimiter.defaultWindow,
+    int maxRateLimitViolations = WebSocketRateLimiter.defaultMaxViolations,
+    DateTime Function()? clock,
   }) : port = port,
        _bindAddress = bindAddress ?? InternetAddress.loopbackIPv4,
        _bindAddressOverride = bindAddress,
        _configPath = configPath,
+       _frontendRoot = frontendRoot,
        _authSessionManager =
            authSessionManager ?? AuthSessionManager(issueCodeOnCreate: false),
+       _sessionStoreFactory = sessionStoreFactory,
        _authRateLimiter = authRateLimiter ?? AuthRateLimiter(),
        _clientIdentityResolver =
            clientIdentityResolver ?? _defaultClientIdentity,
@@ -55,7 +118,44 @@ class DartServerService {
          limits: configLimits ?? const ConfigLimits(),
        ),
        _environment = Map<String, String>.of(environment),
-       _commandExecutor = commandExecutor ?? const ProcessCommandExecutor();
+       _commandExecutor = commandExecutor ?? const ProcessCommandExecutor(),
+       _maxConnections = _validateMaxConnections(maxConnections),
+       _maxFrameBytes = _validatePositiveLimit(maxFrameBytes, 'maxFrameBytes'),
+       _maxOversizedFrameViolations = _validatePositiveLimit(
+         maxOversizedFrameViolations,
+         'maxOversizedFrameViolations',
+       ),
+       _maxRequestTargetBytes = _validatePositiveLimit(
+         maxRequestTargetBytes,
+         'maxRequestTargetBytes',
+       ),
+       _maxRequestHeaderBytes = _validatePositiveLimit(
+         maxRequestHeaderBytes,
+         'maxRequestHeaderBytes',
+       ),
+       _maxRequestHeaderCount = _validatePositiveLimit(
+         maxRequestHeaderCount,
+         'maxRequestHeaderCount',
+       ),
+       _maxRequestBodyBytes = _validatePositiveLimit(
+         maxRequestBodyBytes,
+         'maxRequestBodyBytes',
+       ),
+       _webSocketRateLimiter =
+           webSocketRateLimiter ??
+           WebSocketRateLimiter(
+             maxMessagesPerWindow: maxMessagesPerWindow,
+             maxActionRequestsPerWindow: maxActionRequestsPerWindow,
+             window: rateLimitWindow,
+             maxViolations: maxRateLimitViolations,
+             clock: clock,
+           ) {
+    if (authSessionManager != null && sessionStoreFactory != null) {
+      throw ArgumentError(
+        'authSessionManager and sessionStoreFactory are mutually exclusive',
+      );
+    }
+  }
 
   HttpServer? _server;
   final List<WebSocket> _clients = [];
@@ -63,19 +163,48 @@ class DartServerService {
   InternetAddress _bindAddress;
   final InternetAddress? _bindAddressOverride;
   final String _configPath;
-  final AuthSessionManager _authSessionManager;
+  final String _frontendRoot;
+  AuthSessionManager _authSessionManager;
+  final FileSessionStore Function()? _sessionStoreFactory;
+  FileSessionStore? _ownedSessionStore;
+  Future<void>? _starting;
   final AuthRateLimiter _authRateLimiter;
   final String Function(HttpRequest request) _clientIdentityResolver;
   final ConfigValidator _configValidator;
   final Map<String, String> _environment;
   final CommandExecutor _commandExecutor;
+  final int _maxConnections;
+  final int _maxFrameBytes;
+  final int _maxOversizedFrameViolations;
+  final int _maxRequestTargetBytes;
+  final int _maxRequestHeaderBytes;
+  final int _maxRequestHeaderCount;
+  final int _maxRequestBodyBytes;
+  final WebSocketRateLimiter _webSocketRateLimiter;
   Future<void> _saveOperation = Future<void>.value();
   bool isRunning = false;
   bool isSecure = false;
   int port;
+  int _pendingConnections = 0;
+  final Set<WebSocket> _rateLimitedClosing = <WebSocket>{};
+  final Set<WebSocket> _oversizedFrameClosing = <WebSocket>{};
+  final Map<WebSocket, int> _oversizedFrameViolations = <WebSocket, int>{};
+  String? _canonicalFrontendRoot;
 
   /// The effective address selected for the next server start.
   InternetAddress get bindAddress => _bindAddress;
+
+  int get maxConnections => _maxConnections;
+
+  int get maxFrameBytes => _maxFrameBytes;
+
+  int get maxRequestTargetBytes => _maxRequestTargetBytes;
+
+  int get maxRequestHeaderBytes => _maxRequestHeaderBytes;
+
+  int get maxRequestHeaderCount => _maxRequestHeaderCount;
+
+  int get maxRequestBodyBytes => _maxRequestBodyBytes;
 
   /// Issues a new one-time code for a local, already-running daemon.
   ///
@@ -99,6 +228,134 @@ class DartServerService {
         .resolve(requestedPath);
   }
 
+  Future<String?> _resolveFrontendRoot() async {
+    try {
+      final resolved = await Directory(_frontendRoot).resolveSymbolicLinks();
+      final stat = await FileStat.stat(resolved);
+      if (stat.type != FileSystemEntityType.directory) return null;
+      return path.normalize(resolved);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<File?> _resolveFrontendFile(Uri uri) async {
+    final root = _canonicalFrontendRoot;
+    if (root == null) return null;
+
+    final rawPath = uri.path;
+    if (!rawPath.startsWith('/') ||
+        rawPath.startsWith('//') ||
+        rawPath.contains('\u0000')) {
+      return null;
+    }
+
+    // Decode repeatedly so encoded separators, dot segments, and double
+    // encoded traversal cannot become filesystem syntax after validation.
+    var decodedPath = rawPath;
+    for (var i = 0; i < 3; i++) {
+      String next;
+      try {
+        next = Uri.decodeComponent(decodedPath);
+      } catch (_) {
+        return null;
+      }
+      if (next == decodedPath) break;
+      decodedPath = next;
+    }
+    if (decodedPath.contains('\u0000') || decodedPath.startsWith('//')) {
+      return null;
+    }
+
+    final segments = decodedPath.split('/');
+    if (segments.any(
+      (segment) =>
+          segment == '.' ||
+          segment == '..' ||
+          segment.contains('\\') ||
+          segment.startsWith('/') ||
+          segment.contains('\u0000'),
+    )) {
+      return null;
+    }
+
+    final uriSegments = uri.pathSegments;
+    if (uriSegments.any(
+      (segment) =>
+          segment == '.' ||
+          segment == '..' ||
+          segment.contains('\\') ||
+          segment.startsWith('/') ||
+          segment.contains('\u0000'),
+    )) {
+      return null;
+    }
+
+    final relativeSegments = uriSegments.where((segment) => segment.isNotEmpty);
+    final requestedPath = path.joinAll([root, ...relativeSegments]);
+    String canonicalPath;
+    try {
+      canonicalPath = await File(requestedPath).resolveSymbolicLinks();
+    } catch (_) {
+      return null;
+    }
+    if (!path.isWithin(root, canonicalPath)) return null;
+
+    try {
+      final stat = await FileStat.stat(canonicalPath);
+      if (stat.type != FileSystemEntityType.file) return null;
+      return File(canonicalPath);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ContentType _frontendContentType(String filePath) {
+    final extension = path.extension(filePath).toLowerCase();
+    return switch (extension) {
+      '.html' || '.htm' => ContentType.html,
+      '.css' => ContentType('text', 'css', charset: 'utf-8'),
+      '.js' || '.mjs' => ContentType('application', 'javascript'),
+      '.json' => ContentType.json,
+      '.png' => ContentType('image', 'png'),
+      '.jpg' || '.jpeg' => ContentType('image', 'jpeg'),
+      '.gif' => ContentType('image', 'gif'),
+      '.svg' => ContentType('image', 'svg+xml'),
+      '.webp' => ContentType('image', 'webp'),
+      '.ico' => ContentType('image', 'x-icon'),
+      '.woff' => ContentType('font', 'woff'),
+      '.woff2' => ContentType('font', 'woff2'),
+      '.ttf' => ContentType('font', 'ttf'),
+      _ => ContentType.text,
+    };
+  }
+
+  void _sendFrontendNotFound(HttpResponse response) {
+    try {
+      response
+        ..statusCode = HttpStatus.notFound
+        ..write('Not Found')
+        ..close();
+    } catch (_) {
+      // The response may already have started if a file disappeared mid-read.
+    }
+  }
+
+  /// Applies the standalone server's response policy before any route writes.
+  ///
+  /// The frontend is served from a mutable local directory and its assets are
+  /// not content-addressed, so responses are deliberately not cached. The
+  /// policy can be relaxed for fingerprinted immutable assets in a future
+  /// release without changing the security headers.
+  void _applyHttpResponsePolicy(HttpResponse response) {
+    response.headers
+      ..set('X-Content-Type-Options', 'nosniff')
+      ..set('X-Frame-Options', 'DENY')
+      ..set('Referrer-Policy', 'no-referrer')
+      ..set('Content-Security-Policy', _contentSecurityPolicy)
+      ..set('Cache-Control', 'no-store');
+  }
+
   Map<String, dynamic> metrics = {
     "cpu_temp": 45,
     "cpu_load": 15,
@@ -109,12 +366,34 @@ class DartServerService {
     "ram_percent": 50,
   };
 
-  Future<void> startServer() async {
-    if (isRunning) return;
+  Future<void> startServer() {
+    if (isRunning) return Future<void>.value();
 
-    await _loadConfig();
+    if (_starting != null) return _starting!;
+    final starting = _startServer();
+    _starting = starting;
+    return starting.whenComplete(() => _starting = null);
+  }
 
+  Future<void> _startServer() async {
     try {
+      await _loadConfig();
+      _canonicalFrontendRoot = await _resolveFrontendRoot();
+      final factory = _sessionStoreFactory;
+      if (factory != null) {
+        // A fresh store/manager pair is owned by each successful start. Read
+        // acquires the lock before the listener can accept any requests.
+        final store = factory();
+        _ownedSessionStore = store;
+        final manager = AuthSessionManager(
+          issueCodeOnCreate: false,
+          sessionStore: store,
+        );
+        if (!manager.persistenceHealthy) {
+          throw const SessionStoreException();
+        }
+        _authSessionManager = manager;
+      }
       final context = serverTlsContext(
         _environment,
         requireTls: !_bindAddress.isLoopback,
@@ -132,112 +411,263 @@ class DartServerService {
         "🚀 [DartServerService] Running in $mode mode (${isSecure ? 'HTTPS/WSS' : 'HTTP/WS'}) on ${_bindAddress.address}:$port",
       );
 
-      _server!.listen((HttpRequest request) async {
-        if (request.uri.path == '/ws') {
-          try {
-            final clientIdentity = _clientIdentityResolver(request);
-            final socket = await WebSocketTransformer.upgrade(request);
-            _handleClientConnect(socket, clientIdentity);
-          } catch (_) {
-            print("WS Upgrade Error");
-          }
-        } else if (request.uri.path == '/system_icons' ||
-            request.uri.path == '/system_icons/') {
-          try {
-            final iconPath = request.uri.queryParameters['path'];
-            if (iconPath != null && iconPath.isNotEmpty) {
-              final resolvedPath = _resolveSystemIconPath(iconPath);
-              if (resolvedPath == null) {
-                request.response
-                  ..statusCode = HttpStatus.notFound
-                  ..close();
-                return;
-              }
-
-              final file = File(resolvedPath);
-              if (await file.exists()) {
-                final ext = resolvedPath.split('.').last.toLowerCase();
-                var contentType = 'image/png';
-                if (ext == 'svg')
-                  contentType = 'image/svg+xml';
-                else if (ext == 'xpm')
-                  contentType = 'image/x-xpixmap';
-
-                request.response.headers.contentType = ContentType.parse(
-                  contentType,
-                );
-                request.response.headers.add('Cache-Control', 'max-age=86400');
-                await file.openRead().pipe(request.response);
-                return;
-              }
-            }
-            request.response
-              ..statusCode = HttpStatus.notFound
-              ..close();
-          } catch (_) {
-            request.response
-              ..statusCode = HttpStatus.internalServerError
-              ..close();
-          }
-        } else {
-          try {
-            final uri = request.uri.path == '/'
-                ? '/index.html'
-                : request.uri.path;
-            final file = File('../frontend$uri');
-            if (await file.exists()) {
-              final ext = uri.split('.').last;
-              var contentType = 'text/plain';
-              if (ext == 'html') contentType = 'text/html';
-              if (ext == 'css') contentType = 'text/css';
-              if (ext == 'js') contentType = 'application/javascript';
-              if (ext == 'png') contentType = 'image/png';
-
-              request.response.headers.contentType = ContentType.parse(
-                contentType,
-              );
-              await file.openRead().pipe(request.response);
-            } else {
-              request.response
-                ..statusCode = HttpStatus.notFound
-                ..write('Not Found')
-                ..close();
-            }
-          } catch (_) {
-            request.response
-              ..statusCode = HttpStatus.internalServerError
-              ..close();
-          }
-        }
-      });
-
+      _server!.listen(
+        (HttpRequest request) async {
+          if (!await _prepareHttpRequest(request)) return;
+          await _routeHttpRequest(request);
+        },
+        onError: (_, __) {
+          // Dart's HttpServer parser closes malformed request-line/header
+          // connections before a request callback exists. Never expose parser
+          // exception text or raw request data through the server log.
+        },
+      );
       _authSessionManager.addRevocationListener(_closeRevokedClients);
       _startMetricsLoop();
     } catch (_) {
-      _authSessionManager.removeRevocationListener(_closeRevokedClients);
-      await _server?.close(force: true);
-      _server = null;
-      isRunning = false;
-      isSecure = false;
+      await _disposeServer();
       print(
-        "❌ [DartServerService] Failed to start server (check TLS settings and bind address)",
+        '❌ [DartServerService] Failed to start server '
+        '(check session storage, TLS settings and bind address)',
       );
     }
   }
 
+  Future<void> _routeHttpRequest(HttpRequest request) async {
+    _applyHttpResponsePolicy(request.response);
+    if (request.uri.path == '/ws') {
+      if (!_originMatchesRequestHost(request)) {
+        await _rejectInvalidOrigin(request);
+        return;
+      }
+      if (_clients.length + _pendingConnections >= _maxConnections) {
+        await _rejectConnectionAtCapacity(request);
+        return;
+      }
+      _pendingConnections++;
+      try {
+        final clientIdentity = _clientIdentityResolver(request);
+        final socket = await WebSocketTransformer.upgrade(request);
+        _handleClientConnect(socket, clientIdentity);
+      } catch (_) {
+        print("WS Upgrade Error");
+      } finally {
+        _pendingConnections--;
+      }
+    } else if (request.uri.path == '/system_icons' ||
+        request.uri.path == '/system_icons/') {
+      try {
+        final iconPath = request.uri.queryParameters['path'];
+        if (iconPath != null && iconPath.isNotEmpty) {
+          final resolvedPath = _resolveSystemIconPath(iconPath);
+          if (resolvedPath == null) {
+            request.response
+              ..statusCode = HttpStatus.notFound
+              ..close();
+            return;
+          }
+
+          final file = File(resolvedPath);
+          if (await file.exists()) {
+            final ext = resolvedPath.split('.').last.toLowerCase();
+            var contentType = 'image/png';
+            if (ext == 'svg')
+              contentType = 'image/svg+xml';
+            else if (ext == 'xpm')
+              contentType = 'image/x-xpixmap';
+
+            request.response.headers.contentType = ContentType.parse(
+              contentType,
+            );
+            await file.openRead().pipe(request.response);
+            return;
+          }
+        }
+        request.response
+          ..statusCode = HttpStatus.notFound
+          ..close();
+      } catch (_) {
+        request.response
+          ..statusCode = HttpStatus.internalServerError
+          ..close();
+      }
+    } else {
+      try {
+        final requestedUri = request.requestedUri;
+        final uri = requestedUri.path == '/'
+            ? requestedUri.replace(path: '/index.html')
+            : requestedUri;
+        final file = await _resolveFrontendFile(uri);
+        if (file == null) {
+          _sendFrontendNotFound(request.response);
+          return;
+        }
+
+        request.response.headers.contentType = _frontendContentType(file.path);
+        await file.openRead().pipe(request.response);
+      } catch (_) {
+        _sendFrontendNotFound(request.response);
+      }
+    }
+  }
+
+  Future<_RequestLimitFailure?> _validateHttpRequestEnvelope(
+    HttpRequest request,
+  ) async {
+    try {
+      if (utf8.encode(request.uri.toString()).length > _maxRequestTargetBytes) {
+        return _RequestLimitFailure.tooLarge;
+      }
+      if (request.uri.fragment.isNotEmpty) {
+        return _RequestLimitFailure.malformed;
+      }
+
+      var headerCount = 0;
+      var headerBytes = 2; // The empty line terminating the header section.
+      request.headers.forEach((name, values) {
+        headerCount += values.length;
+        for (final value in values) {
+          // HttpHeaders exposes normalized fields rather than the raw wire
+          // bytes. This conservative serialization is the controllable
+          // application-level approximation of total field-line bytes.
+          headerBytes +=
+              utf8.encode(name).length + 2 + utf8.encode(value).length + 2;
+        }
+      });
+      if (headerCount > _maxRequestHeaderCount ||
+          headerBytes > _maxRequestHeaderBytes) {
+        return _RequestLimitFailure.tooLarge;
+      }
+
+      if (request.contentLength < -1) {
+        return _RequestLimitFailure.malformed;
+      }
+    } catch (_) {
+      return _RequestLimitFailure.malformed;
+    }
+    return null;
+  }
+
+  Future<_RequestLimitFailure?> _validateHttpRequestBody(
+    HttpRequest request,
+  ) async {
+    final contentLength = request.contentLength;
+    if (_isHttpUpgrade(request)) {
+      // Dart's parser switches the request stream to upgraded mode and
+      // reports no readable HTTP body. Do not consume it before the
+      // WebSocketTransformer takes ownership of the connection.
+      if (contentLength > _maxRequestBodyBytes) {
+        return _RequestLimitFailure.tooLarge;
+      }
+      return null;
+    }
+    if (contentLength > _maxRequestBodyBytes) {
+      // Mark the body as owned before closing the response. Otherwise the
+      // public HttpResponse.close() API may drain an unbounded body for us.
+      request.listen(null, onError: (_, __) {});
+      return _RequestLimitFailure.tooLarge;
+    }
+    if (contentLength == 0) return null;
+
+    var received = 0;
+    try {
+      await for (final chunk in request) {
+        received += chunk.length;
+        if (received > _maxRequestBodyBytes) {
+          return _RequestLimitFailure.tooLarge;
+        }
+      }
+      return null;
+    } catch (_) {
+      return _RequestLimitFailure.malformed;
+    }
+  }
+
+  bool _isHttpUpgrade(HttpRequest request) {
+    final connection = request.headers.value(HttpHeaders.connectionHeader);
+    final upgrade = request.headers.value(HttpHeaders.upgradeHeader);
+    if (connection == null || upgrade == null) return false;
+    return connection
+        .split(',')
+        .map((token) => token.trim().toLowerCase())
+        .contains('upgrade');
+  }
+
+  Future<bool> _prepareHttpRequest(HttpRequest request) async {
+    _applyHttpResponsePolicy(request.response);
+    final envelopeFailure = await _validateHttpRequestEnvelope(request);
+    if (envelopeFailure != null) {
+      await _rejectHttpRequest(request, envelopeFailure);
+      return false;
+    }
+
+    final bodyFailure = await _validateHttpRequestBody(request);
+    if (bodyFailure != null) {
+      await _rejectHttpRequest(request, bodyFailure);
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _rejectHttpRequest(
+    HttpRequest request,
+    _RequestLimitFailure failure,
+  ) async {
+    final response = request.response;
+    final message = switch (failure) {
+      _RequestLimitFailure.malformed => 'Bad Request',
+      _RequestLimitFailure.tooLarge => 'Payload Too Large',
+    };
+    try {
+      response
+        ..statusCode = failure.statusCode
+        ..persistentConnection = false
+        ..headers.contentLength = message.length
+        ..write(message);
+      await response.close();
+    } catch (_) {
+      // The peer may have closed the connection after sending the invalid
+      // request. Do not expose request details or parser errors.
+    }
+  }
+
   Future<void> stopServer() async {
+    await _starting;
+    await _disposeServer();
+  }
+
+  Future<void> _disposeServer() async {
     _authSessionManager.removeRevocationListener(_closeRevokedClients);
     _metricsTimer?.cancel();
-    for (var client in _clients) {
-      await client.close();
+    try {
+      for (final client in List<WebSocket>.of(_clients)) {
+        try {
+          await client.close();
+        } catch (_) {
+          // A disconnected peer must not prevent release of the store lock.
+        }
+      }
+    } finally {
+      _clients.clear();
+      _authenticatedClients.clear();
+      _clientIdentities.clear();
+      _rateLimitedClosing.clear();
+      _oversizedFrameClosing.clear();
+      _oversizedFrameViolations.clear();
+      _webSocketRateLimiter.clear();
+      _pendingConnections = 0;
+      try {
+        await _server?.close(force: true);
+      } finally {
+        _server = null;
+        _canonicalFrontendRoot = null;
+        isRunning = false;
+        isSecure = false;
+        final store = _ownedSessionStore;
+        _ownedSessionStore = null;
+        store?.close();
+      }
     }
-    _clients.clear();
-    _authenticatedClients.clear();
-    _clientIdentities.clear();
-    await _server?.close(force: true);
-    _server = null;
-    isRunning = false;
-    isSecure = false;
   }
 
   void _handleClientConnect(WebSocket socket, String clientIdentity) {
@@ -253,20 +683,24 @@ class DartServerService {
         unawaited(_handleMessage(message, socket));
       },
       onDone: () {
-        _clients.remove(socket);
-        _authenticatedClients.remove(socket);
-        _clientIdentities.remove(socket);
+        _removeClient(socket);
         print("Client disconnected. Remaining: ${_clients.length}");
       },
       onError: (err) {
-        _clients.remove(socket);
-        _authenticatedClients.remove(socket);
-        _clientIdentities.remove(socket);
+        _removeClient(socket);
       },
     );
   }
 
   Future<void> _handleMessage(dynamic message, WebSocket socket) async {
+    if (!_acceptFrame(message, socket)) return;
+
+    final messageLimit = _webSocketRateLimiter.allowMessage(socket);
+    if (!messageLimit.isAllowed) {
+      _handleRateLimitViolation(socket, messageLimit);
+      return;
+    }
+
     try {
       final data = jsonDecode(message.toString());
       if (data is! Map) return;
@@ -275,6 +709,11 @@ class DartServerService {
       if (type == 'authenticate') {
         _authenticate(data, socket);
       } else if (type == 'trigger_action') {
+        final actionLimit = _webSocketRateLimiter.allowAction(socket);
+        if (!actionLimit.isAllowed) {
+          _handleRateLimitViolation(socket, actionLimit);
+          return;
+        }
         final session = _sessionFor(socket);
         if (!_requireCapability(socket, session, AuthCapability.control)) {
           return;
@@ -316,6 +755,65 @@ class DartServerService {
       }
     } catch (_) {
       // Invalid or malformed frames are ignored without logging their data.
+    }
+  }
+
+  /// Checks the protocol frame representation before any JSON work occurs.
+  ///
+  /// WebSocket binary frames are intentionally not coerced to strings: doing
+  /// so could turn arbitrary bytes into an expensive or ambiguous JSON input.
+  bool _acceptFrame(dynamic message, WebSocket socket) {
+    if (message is! String || utf8.encode(message).length > _maxFrameBytes) {
+      _handleOversizedFrameViolation(socket);
+      return false;
+    }
+    return true;
+  }
+
+  void _handleOversizedFrameViolation(WebSocket socket) {
+    if (!_clients.contains(socket) || _oversizedFrameClosing.contains(socket)) {
+      return;
+    }
+
+    final violations = (_oversizedFrameViolations[socket] ?? 0) + 1;
+    _oversizedFrameViolations[socket] = violations;
+    _sendAuthError(socket, 'message_too_large');
+    if (violations < _maxOversizedFrameViolations) return;
+
+    _oversizedFrameClosing.add(socket);
+    unawaited(_closeOversizedFrame(socket));
+  }
+
+  Future<void> _closeOversizedFrame(WebSocket socket) async {
+    try {
+      await socket.close(WebSocketStatus.policyViolation, 'Message too large');
+    } catch (_) {
+      // The disconnect callback still clears all per-client state.
+    }
+  }
+
+  void _handleRateLimitViolation(
+    WebSocket socket,
+    WebSocketRateLimitResult result,
+  ) {
+    if (!_clients.contains(socket) || _rateLimitedClosing.contains(socket)) {
+      return;
+    }
+    _sendAuthError(socket, 'rate_limited');
+    if (!result.shouldClose) return;
+
+    _rateLimitedClosing.add(socket);
+    unawaited(_closeRateLimited(socket));
+  }
+
+  Future<void> _closeRateLimited(WebSocket socket) async {
+    try {
+      await socket.close(
+        WebSocketStatus.policyViolation,
+        'Rate limit exceeded',
+      );
+    } catch (_) {
+      // The disconnect callback still clears all per-client state.
     }
   }
 
@@ -392,9 +890,7 @@ class DartServerService {
         continue;
       }
       final socket = entry.key;
-      _authenticatedClients.remove(socket);
-      _clients.remove(socket);
-      _clientIdentities.remove(socket);
+      _removeClient(socket);
       unawaited(_closeInvalidSession(socket));
     }
   }
@@ -425,6 +921,58 @@ class DartServerService {
 
   void _sendAuthError(WebSocket socket, String code) {
     _sendToSocket(socket, {"type": "auth_error", "code": code});
+  }
+
+  void _removeClient(WebSocket socket) {
+    _clients.remove(socket);
+    _authenticatedClients.remove(socket);
+    _clientIdentities.remove(socket);
+    _rateLimitedClosing.remove(socket);
+    _oversizedFrameClosing.remove(socket);
+    _oversizedFrameViolations.remove(socket);
+    _webSocketRateLimiter.removeClient(socket);
+  }
+
+  Future<void> _rejectConnectionAtCapacity(HttpRequest request) async {
+    try {
+      final socket = await WebSocketTransformer.upgrade(request);
+      await socket.close(
+        WebSocketStatus.policyViolation,
+        'Connection capacity reached',
+      );
+    } catch (_) {
+      // Do not retain request, socket, identity, or authentication state.
+    }
+  }
+
+  /// Validates browser-supplied WebSocket origins without requiring an Origin
+  /// header from native clients. The listener's transport determines the
+  /// expected HTTP scheme; the Host header supplies the authority.
+  bool _originMatchesRequestHost(HttpRequest request) {
+    final originHeader = request.headers.value('origin');
+    if (originHeader == null) return true;
+
+    final origin = _parseOriginEndpoint(originHeader);
+    final hostHeader = request.headers.value(HttpHeaders.hostHeader);
+    final requestHost = hostHeader == null
+        ? null
+        : _parseHostEndpoint(hostHeader, isSecure ? 'https' : 'http');
+    if (origin == null || requestHost == null) return false;
+
+    return origin.scheme == requestHost.scheme &&
+        origin.host == requestHost.host &&
+        origin.port == requestHost.port;
+  }
+
+  Future<void> _rejectInvalidOrigin(HttpRequest request) async {
+    try {
+      request.response
+        ..statusCode = HttpStatus.forbidden
+        ..write('Forbidden');
+      await request.response.close();
+    } catch (_) {
+      // The request may already have been closed by the peer.
+    }
   }
 
   void _sendInitState(WebSocket socket) {
@@ -817,5 +1365,141 @@ class DartServerService {
   }
 }
 
+enum _RequestLimitFailure {
+  malformed,
+  tooLarge;
+
+  int get statusCode => switch (this) {
+    malformed => HttpStatus.badRequest,
+    tooLarge => HttpStatus.requestEntityTooLarge,
+  };
+}
+
 String _defaultClientIdentity(HttpRequest request) =>
     request.connectionInfo?.remoteAddress.address ?? 'unknown';
+
+final class _OriginEndpoint {
+  const _OriginEndpoint({
+    required this.scheme,
+    required this.host,
+    required this.port,
+  });
+
+  final String scheme;
+  final String host;
+  final int port;
+}
+
+final class _AuthorityParts {
+  const _AuthorityParts(this.host, this.port);
+
+  final String host;
+  final int? port;
+}
+
+_OriginEndpoint? _parseOriginEndpoint(String value) {
+  if (value.isEmpty || value.trim() != value || _containsWhitespace(value)) {
+    return null;
+  }
+
+  try {
+    final uri = Uri.parse(value);
+    final scheme = uri.scheme.toLowerCase();
+    if ((scheme != 'http' && scheme != 'https') ||
+        !uri.hasAuthority ||
+        uri.userInfo.isNotEmpty ||
+        uri.host.isEmpty ||
+        uri.path.isNotEmpty ||
+        uri.query.isNotEmpty ||
+        uri.fragment.isNotEmpty) {
+      return null;
+    }
+
+    final authority = _parseAuthority(uri.authority);
+    if (authority == null ||
+        authority.host.toLowerCase() != uri.host.toLowerCase()) {
+      return null;
+    }
+    return _OriginEndpoint(
+      scheme: scheme,
+      host: uri.host.toLowerCase(),
+      port: authority.port ?? _defaultOriginPort(scheme),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+_OriginEndpoint? _parseHostEndpoint(String value, String scheme) {
+  if (value.isEmpty || value.trim() != value || _containsWhitespace(value)) {
+    return null;
+  }
+
+  try {
+    final authority = _parseAuthority(value);
+    if (authority == null) return null;
+    final uri = Uri.parse('http://$value');
+    if (!uri.hasAuthority ||
+        uri.userInfo.isNotEmpty ||
+        uri.host.isEmpty ||
+        uri.path.isNotEmpty ||
+        uri.query.isNotEmpty ||
+        uri.fragment.isNotEmpty ||
+        authority.host.toLowerCase() != uri.host.toLowerCase()) {
+      return null;
+    }
+    return _OriginEndpoint(
+      scheme: scheme,
+      host: uri.host.toLowerCase(),
+      port: authority.port ?? _defaultOriginPort(scheme),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+_AuthorityParts? _parseAuthority(String authority) {
+  if (authority.isEmpty || _containsWhitespace(authority)) return null;
+
+  String host;
+  String? portText;
+  if (authority.startsWith('[')) {
+    final closingBracket = authority.indexOf(']');
+    if (closingBracket <= 1) return null;
+    host = authority.substring(1, closingBracket);
+    final suffix = authority.substring(closingBracket + 1);
+    if (suffix.isNotEmpty) {
+      if (!suffix.startsWith(':') || suffix.length == 1) return null;
+      portText = suffix.substring(1);
+    }
+  } else {
+    final colon = authority.lastIndexOf(':');
+    if (colon == -1) {
+      host = authority;
+    } else {
+      if (authority.indexOf(':') != colon ||
+          colon == 0 ||
+          colon == authority.length - 1) {
+        return null;
+      }
+      host = authority.substring(0, colon);
+      portText = authority.substring(colon + 1);
+    }
+  }
+
+  if (host.isEmpty ||
+      host.contains('@') ||
+      host.contains('[') ||
+      host.contains(']')) {
+    return null;
+  }
+  if (portText == null) return _AuthorityParts(host, null);
+
+  final port = int.tryParse(portText);
+  if (port == null || port < 0 || port > 65535) return null;
+  return _AuthorityParts(host, port);
+}
+
+int _defaultOriginPort(String scheme) => scheme == 'https' ? 443 : 80;
+
+bool _containsWhitespace(String value) => value.contains(RegExp(r'\s'));

@@ -746,3 +746,537 @@ now; background/tray pairing remains required work.
   nine informational lints; format and `git diff --check` passed.
 - No UI changes, expiry timer, public revocation endpoint, commit or push.
   Administrative UI/local revocation controls remain required follow-ups.
+
+## Step 19 — Bounded authentication identity state
+
+### Goal and changes
+
+- Added an injectable `maxTrackedIdentities` limit to `AuthRateLimiter`, with a
+  safe default of 1024 identities.
+- Unlocked failure state expires after one lockout duration of inactivity and
+  expired or stale entries are removed opportunistically on limiter access.
+- At capacity, the limiter evicts only the oldest unlocked identity. If all
+  retained identities are actively locked, new identities fail closed until a
+  lockout expires; active locked identities are never evicted.
+- Existing per-peer failure counting, successful-authentication reset, and
+  credential/payload redaction behavior remain unchanged.
+- Added deterministic focused tests for stale cleanup, identity capacity,
+  active-lockout preservation, and metadata-only state.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/auth_rate_limiter.dart`
+- `deckboard_daemon/backend/test/auth_rate_limiter_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused limiter test `dart test test/auth_rate_limiter_test.dart`: **PASS**, 7
+  tests.
+- Full backend `dart test -r compact`: **PASS**, 84 tests.
+- Changed-file `dart analyze lib/auth_rate_limiter.dart
+  test/auth_rate_limiter_test.dart`: **PASS**, no issues found.
+- `dart format --output=none --set-exit-if-changed` on the two changed Dart
+  files: **PASS**, no files changed.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-auth-rate-limiter-verified`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+Global connection/action/request limits and the embedded Flutter server remain
+required follow-up work.
+
+## Step 20 — Bounded standalone WebSocket traffic
+
+### Goal and changes
+
+- Added injectable, fixed-window per-client WebSocket limits with safe defaults:
+  simultaneous sockets, message frames, action requests, and repeated-violation
+  close threshold.
+- Socket capacity is reserved before WebSocket upgrade completion and rejected
+  sockets receive only a bounded policy close before authentication state is
+  created. Pending reservations prevent concurrent handshakes from bypassing
+  the cap.
+- Message frames are limited before JSON dispatch. `trigger_action` frames have
+  a separate action-request limit, including for unauthenticated sockets, so
+  auth gates cannot be bypassed by flooding action requests.
+- Authenticated and unauthenticated violators receive only the bounded
+  `rate_limited` protocol error; repeated violations close the socket with a
+  fixed policy reason. No payloads, credentials, or raw frames are logged.
+- Per-socket counters are removed on disconnect and all limiter state is reset
+  on server stop/restart. Injected clocks and limits make boundary behavior
+  deterministic in tests.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/lib/websocket_rate_limiter.dart`
+- `deckboard_daemon/backend/test/dart_server_auth_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused auth/server test `dart test test/dart_server_auth_test.dart -r
+  compact`: **PASS**, 20 tests.
+- Full backend `dart test -r compact`: **PASS**, 90 tests.
+- Changed-file `dart analyze lib/auth_rate_limiter.dart
+  lib/dart_server_service.dart lib/websocket_rate_limiter.dart
+  test/auth_rate_limiter_test.dart test/dart_server_auth_test.dart`: **PASS**;
+  no errors, with nine existing informational lint diagnostics in the server
+  and auth test files.
+- `dart format --output=none --set-exit-if-changed` on all changed Dart files:
+  **PASS**, no files changed.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-websocket-limits-verified`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This slice changes only the standalone Dart WebSocket server and tests. TLS,
+Flutter/UI behavior, config validation, and app discovery implementation were
+not changed.
+
+## Step 21 — Bounded WebSocket frame decoding
+
+### Goal and changes
+
+- Added an injectable standalone-server maximum WebSocket text-frame size of 64
+  KiB by default.
+- Frame size is measured from UTF-8 bytes and checked before `jsonDecode` or
+  protocol dispatch. Binary frames are rejected rather than coerced to text.
+- Oversized and binary frames receive only the bounded `message_too_large`
+  protocol error; the frame contents are never echoed or logged.
+- Repeated frame-size violations close only the offending socket with a policy
+  violation code and fixed, bounded reason. Per-socket violation counters and
+  close state are removed on disconnect and server stop.
+- Added deterministic boundary, unauthenticated/authenticated rejection,
+  binary-frame, repeated-close, and surviving-socket tests. Existing auth,
+  action, config, and discovery flows remain unchanged for accepted frames.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_auth_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused frame/auth tests `dart test test/dart_server_auth_test.dart -r
+  compact --name '^((accepts a text|rejects an oversized|rejects binary|closes
+  after repeated oversized|an oversized client).*)'`: **PASS**, 6 tests.
+- Full backend `dart test -r compact`: **PASS**, 96 tests.
+- Full backend `dart analyze`: **PASS**, no errors; 13 existing informational
+  diagnostics remain.
+- `dart format --output=none --set-exit-if-changed lib test`: **PASS**, no files
+  changed.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-frame-limits-verified`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This slice changes only standalone Dart WebSocket frame handling and focused
+tests/docs. It does not change HTTP/TLS handling, config validation, discovery,
+Flutter/UI behavior, or the embedded Flutter server.
+
+## Step 22 — Standalone static frontend path containment
+
+### Goal and changes
+
+- Added a testable frontend-root seam to `DartServerService`; the production
+  default remains `../frontend`.
+- The frontend root is canonicalized once per server start and must resolve to a
+  directory before static serving is enabled.
+- Static requests canonicalize the requested file, require it to remain beneath
+  the canonical root, and require a regular file. Missing files, traversal,
+  encoded traversal, absolute-looking paths, malformed paths, and symlink
+  escapes return only `404 Not Found`.
+- Preserved `/` as the `index.html` route and retained HTML, CSS, JavaScript,
+  JSON, image, and common font asset content types. `/system_icons` continues to
+  use its separate approved-root validator.
+- Static filesystem failures are not logged or exposed in HTTP responses.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_static_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused static-server integration tests: **PASS**, 5 tests.
+- Full backend `dart test -r compact`: **PASS**, 101 tests.
+- Full backend `dart analyze`: **PASS**, no errors; existing informational
+  diagnostics remain in the server, pairing-console, and auth tests.
+- `dart format --output=none --set-exit-if-changed` on changed Dart files:
+  **PASS**.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-static-containment-verified`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This slice changes only standalone static frontend serving and its focused tests.
+HTTP request limits, origin policy, frontend XSS-safe rendering, TLS, Flutter/UI
+behavior, configuration, and `/system_icons` authorization remain outside scope.
+
+## Step 23 — Standalone HTTP response security policy
+
+### Goal and changes
+
+- Applied `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, and a restrictive Content Security Policy to
+  every standalone HTTP response before route handling, including missing and
+  error responses and the WebSocket upgrade path.
+- The CSP allows only same-origin resources plus the two exact Google Fonts
+  origins used by the current frontend. It retains narrowly scoped
+  `unsafe-inline` allowances because the existing frontend contains inline
+  scripts and style attributes; replacing those with nonces/external styles is
+  a separate frontend hardening task.
+- Set `Cache-Control: no-store` on all standalone HTTP responses. Frontend
+  assets are not content-addressed, and `/system_icons` is deliberately not
+  permissively cached; a future fingerprinted asset pipeline can introduce a
+  bounded public cache policy safely.
+- Added focused assertions for the root HTML, a valid static asset, missing
+  paths, and an icon error response. No CORS headers were added.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_static_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused static-server tests `dart test test/dart_server_static_test.dart -r
+  compact`: **PASS**, 5 tests.
+- Full backend `dart test -r compact`: **PASS**, 101 tests.
+- Full backend `dart analyze`: **PASS**, no errors; 14 existing informational
+  diagnostics remain in the server, pairing-console, and auth test files.
+- `dart format --output=none --set-exit-if-changed lib test`: **PASS**, no files
+  changed.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-http-policy-verified`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This slice changes only standalone HTTP response headers/cache policy and its
+focused tests/docs. It does not change frontend/UI files, TLS, authentication,
+WebSocket protocol behavior, CORS, or config handling.
+
+## Step 24 — Standalone WebSocket Origin validation
+
+### Goal and changes
+
+- Validated a supplied WebSocket `Origin` before capacity checks, client
+  identity resolution, or WebSocket upgrade.
+- Accepted only `http`/`https` origins whose normalized scheme, host, and
+  effective port match the request's transport and `Host` header, including
+  default ports 80 and 443.
+- Rejected malformed and cross-origin browser upgrades with HTTP 403 and a
+  bounded response. Origin-less upgrades remain accepted for native/mobile
+  clients.
+- Kept static GET and system-icon routes unchanged and added an integration
+  assertion that same-origin static GETs remain served.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_auth_test.dart`
+- `deckboard_daemon/backend/test/dart_server_static_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused auth/static Origin integration tests `dart test
+  test/dart_server_auth_test.dart test/dart_server_static_test.dart -r compact`:
+  **PASS**, 35 tests.
+- Full backend `dart test -r compact`: **PASS**, 105 tests.
+- Full backend `dart analyze`: **PASS**, no errors; 14 existing informational
+  diagnostics remain.
+- `dart format --output=none --set-exit-if-changed lib test`: **PASS**, no files
+  changed.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-origin-verified`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This slice changes only standalone WebSocket upgrade Origin validation and its
+focused tests/docs. It does not add CORS or change TLS, authentication,
+configuration, actions, icon behavior, or frontend/UI files.
+
+## Step 25 — Frontend text-safe rendering
+
+### Goal and changes
+
+- Replaced user-controlled `innerHTML` interpolation in the standalone frontend
+  with DOM construction and `textContent` for board titles, item titles and
+  labels, material icon names, installed-app names/payloads, and imported
+  configuration values.
+- Replaced dynamic image and icon markup with element property/style updates;
+  static layout classes and existing visual styling remain unchanged.
+- Removed all `innerHTML` use from `deckboard_daemon/frontend/app.js`, including
+  the static save/add icon fragments and container clearing.
+
+### Changed files
+
+- `deckboard_daemon/frontend/app.js`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `node --check deckboard_daemon/frontend/app.js`: **PASS**.
+- `grep` audit confirms no `innerHTML`, `outerHTML`, or
+  `insertAdjacentHTML` use remains in `app.js`.
+- `git diff --check`: **PASS**.
+
+### Manual cases to verify in a browser
+
+- A board title containing `<img src=x onerror=alert(1)>` displays as literal
+  text in the sidebar and delete confirmation.
+- An item title/icon containing HTML-like text displays as literal text on the
+  tile and remains literal after reopening the editor.
+- Installed app names and payloads containing HTML-like text remain literal in
+  the search dropdown.
+- Imported custom image data and system icon paths still render through the
+  existing image endpoints without changing the surrounding tile layout.
+
+### Scope boundary
+
+This slice changes only standalone frontend rendering. HTTP limits, image/SVG
+content authorization, backend/Flutter/TLS/auth behavior, and browser end-to-end
+coverage remain separate work.
+
+## Step 26 — Bounded standalone HTTP requests
+
+### Goal and changes
+
+- Added injectable standalone-server limits for request-target bytes, normalized
+  request-header bytes, header-field count, and HTTP body bytes. Safe defaults
+  are 8 KiB, 32 KiB, 100 fields, and 1 MiB respectively.
+- Envelope checks run before static, icon, or WebSocket route handling. Oversized
+  targets, headers, and bodies return only a bounded `413 Payload Too Large`;
+  malformed application-visible targets return only `400 Bad Request`.
+- Known oversized bodies are rejected from their declared `Content-Length`
+  without draining the body. Chunked/unknown bodies are consumed only until the
+  configured limit is crossed, then the connection is closed after the bounded
+  response. Accepted bodies are fully consumed before existing route handling.
+- HTTP upgrade requests are not consumed by the body gate, allowing
+  `WebSocketTransformer.upgrade` and the existing WebSocket frame limits to
+  remain unchanged. Valid static, icon, and WebSocket routes retain their
+  behavior.
+- No raw target, headers, body data, parser exception text, or filesystem
+  details are logged or returned.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_static_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused static/request-limit tests `dart test
+  test/dart_server_static_test.dart -r compact`: **PASS**, 12 tests.
+- Focused WebSocket/auth tests `dart test test/dart_server_auth_test.dart -r
+  compact`: **PASS**, 29 tests; valid native and same-origin upgrades remain
+  usable and existing frame-limit coverage passes.
+- Dart parser malformed request-line/header handling is platform-enforced: the
+  Dart `HttpServer` parser rejects those inputs and closes the connection before
+  the application callback, so this slice cannot send an application-generated
+  400 for those cases through the public `HttpServer` API. The testable
+  application-visible malformed-target case returns bounded 400; parser errors
+  are handled with a silent server error callback.
+- Full backend `dart test -r compact`: **PASS**.
+- Full backend `dart analyze`: **PASS**, with only existing informational
+  diagnostics.
+- `dart format --output=none --set-exit-if-changed lib test`: **PASS**.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-http-request-limits-verified`: **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This slice changes only standalone Dart HTTP request admission and focused
+tests/docs. It does not change UI/frontend, TLS, authentication, configuration,
+WebSocket frame policy, or the embedded Flutter server.
+
+## Step 27 — Opt-in backend session-store boundary
+
+### Goal and changes
+
+- Added `lib/session_store.dart` with an injected synchronous `SessionStore`
+  interface and `FileSessionStore`, optionally passed to `AuthSessionManager`.
+  No server constructor or production startup was changed: without a store, the
+  existing manager remains in-memory.
+- File contents contain only SHA-256 bearer-token fingerprints, role and UTC
+  issued/expiry timestamps; neither bearer tokens nor pairing codes are written.
+  The `crypto` 3.0.7 package was already present transitively and is now a direct
+  dependency. The factory path is under XDG_CONFIG_HOME/kdedeck or
+  HOME/.config/kdedeck, with an explicit absolute path available for tests.
+- A store read failure or corrupt/oversized snapshot makes the opted-in manager
+  deny token validation and new pairing. A write failure clears its active
+  authorization and notifies revocation listeners; it never silently continues
+  as a memory-only store. Stored entries are limited by `maxActiveSessions` and
+  file size. Expired records are removed during restore; revocations persist.
+- Writes flush a unique temporary file then rename it over the primary; on
+  POSIX the store directory is chmod 0700 and the file is chmod 0600. Failure
+  results and diagnostics do not include paths or secrets.
+- Added focused tests for plaintext absence, permissions, restart and role
+  recovery, expiry, revocation, capacity, corrupt-store rejection, interrupted
+  replacement and write failure. Existing server tests remain unchanged.
+
+### Verification
+
+- Full backend `dart test -r compact`: **PASS**, 122 tests.
+- Full backend `dart analyze`: **PASS**, 18 informational style diagnostics,
+  including two initializing-formal suggestions for the public store/test seam.
+- `dart format --output=none --set-exit-if-changed lib test`: **PASS**.
+- `dart compile exe bin/backend.dart -o
+  /tmp/opencode/kdedeck-session-store-verified`: **PASS**.
+- `git diff --check`: **PASS**. Checks used the Flutter-bundled Dart SDK.
+
+### Limitations and next step
+
+- This is not wired into the production standalone server; restart recovery is
+  available only when a caller explicitly supplies a shared store/path. The
+  embedded Flutter server and client token storage are unchanged.
+- If a disk write fails during revocation, this manager denies tokens immediately
+  but the last complete snapshot may still contain the token on restart. Do not
+  re-enable that snapshot without an explicit local recovery/rekey policy. A
+  storage failure cannot guarantee durable revocation by itself.
+- Directory fsync/crash-durability, Windows atomic replacement/ACL verification,
+  symlink races in parent paths, and concurrent managers/processes sharing one
+  path are not addressed. Next wire production startup only alongside a durable
+  failed-revocation recovery policy and cross-platform persistence checks.
+
+## Step 28 — Session-write restart recovery barrier
+
+### Scope and changes
+
+- Updated `deckboard_daemon/backend/lib/session_store.dart` and
+  `deckboard_daemon/backend/test/session_store_test.dart` only for this code slice.
+- Writes first create and flush a private, token-free `.pending` marker before
+  replacing the session snapshot. Marker is removed only after replacement.
+- Reads/writes refuse any existing marker, including malformed and symlinked
+  markers. Failed/interrupted writes therefore cannot silently restore an old
+  token snapshot on ordinary process restart once the barrier exists.
+- Revocation failures do not report success; manager clears authorization in
+  the running process. Tests cover single, role, and all-session revocation.
+- Successful revocation clears the marker and preserves other valid sessions.
+
+### Verification
+
+- Agent ran full `dart test`: **130 passed**, build/format/diff checks passed.
+- Parent reran `dart test test/session_store_test.dart -r compact`: **19 passed**.
+- Focused analysis: no errors/warnings, four informational style suggestions.
+
+### Recovery and residual limits
+
+- Do not just delete a pending marker and reuse the old snapshot. Local recovery
+  must invalidate/reset the session snapshot and re-pair devices; the recovery
+  command/UI is still required before production wiring.
+- If storage refuses marker creation, durable invalidation is impossible; the
+  operation reports failure, but the previous snapshot remains. Do not claim
+  successful durable revocation or enable unattended restoration after that case.
+- Directory fsync/power-loss durability, Windows ACL/replacement tests, and shared
+  store locking remain required. This mechanism covers tested write/process
+  interruption, not every OS/storage failure. Production persistence stays off.
+- No commit/push. Next: explicit safe local reset/recovery and production wiring
+  only after storage-failure policy is resolved.
+
+## Step 29 — Confirmed offline session recovery
+
+- Added `deckboard_daemon/backend/lib/local_session_recovery.dart` and
+  `test/local_session_recovery_test.dart`; added `--reset-sessions` dispatch to
+  `bin/backend.dart` and `FileSessionStore.resetSessions()`.
+- Requires interactive stdin/stdout and exact `RESET` confirmation before any
+  store access. Starts no daemon and creates no remote recovery endpoint.
+- Commits an empty version-1 snapshot before clearing the pending marker. Failed
+  replacement retains the barrier; symlink paths are refused. Old tokens cannot
+  validate against the empty store after restart. No credentials/path details in
+  command output.
+- Agent: full backend tests **138 passed**; build, format and diff checks passed;
+  analysis no errors, informational suggestions only.
+- Parent: `dart test test/local_session_recovery_test.dart
+  test/session_store_test.dart -r compact`: **27 passed**.
+- Production persistence remains disabled. Operator MUST stop the daemon first;
+  enforcement via shared-store locking, Windows protections, directory durability
+  and marker-creation failure policy remain mandatory before production wiring.
+- No real user session store was reset; tests use temporary fixtures only.
+
+### Usage (offline only)
+
+After stopping all daemon instances, from `deckboard_daemon/backend`:
+`dart run bin/backend.dart --reset-sessions` (or the compiled binary with the
+same flag). Confirm RESET in the local terminal. Start the daemon again and use
+`--pair` for re-pairing when persistence is enabled. This currently resets the
+opt-in store at the user-config path, not the live in-memory singleton.
+
+## Step 30 — Exclusive session-store ownership
+
+- Added lazy, lifetime nonblocking OS locking to `FileSessionStore` before
+  reads/writes/reset. Private sibling `.lock` remains on disk; never delete it
+  to force access because that would allow split ownership of different inodes.
+- Same-isolate duplicate instances are guarded in memory as well. Each owner
+  must call idempotent `close()`; closed stores refuse reuse. A new instance can
+  acquire ownership after release. Local recovery closes its store in `finally`.
+- Unsafe lock-file/parent paths are refused; lock is mode 0600 and directory 0700
+  on POSIX. Contending read/write/reset operations fail without changing the
+  primary snapshot or pending marker. Existing recovery barrier remains intact.
+- Added `test/session_store_lock_test.dart` and
+  `test/support/session_store_lock_probe.dart`, updated persistence/reset tests
+  to release owners and account for the retained lock file.
+- Agent full backend `dart test`: **144 passed**; compile/format/diff checks
+  passed; analysis no errors, informational lints only.
+- Parent reran lock/store/recovery suites: **33 passed**, including real child
+  process contention and release after child exit. Fixtures only; no live user
+  session store accessed.
+
+### Required remaining work
+
+Production persistence remains disabled. Integrate store ownership/release with
+the server lifecycle before enabling it. Linux process/isolate ownership tested;
+Windows/macOS runtime locking/ACLs and multiple isolates within one daemon still
+need verification. Cooperative locks do not protect against a hostile same-user
+process replacing paths, and directory fsync/power-loss safety and unwriteable
+storage policy remain mandatory. No commit/push.
+
+## Step 31 — Opt-in server session-store lifecycle
+
+- Added an injected `sessionStoreFactory` to standalone `forTesting` construction.
+  Production singleton remains in-memory; no persistent user store is opened.
+- Server acquires/restores its owned store before opening the listener. Corrupt,
+  pending, busy, or unavailable storage refuses startup without memory fallback.
+- Stop/startup failure removes listeners, disconnects clients and releases store
+  ownership; restart constructs a fresh manager/store. Supplying both an injected
+  auth manager and a store factory is rejected to avoid ownership ambiguity.
+- Added a manager persistence-health getter and
+  `deckboard_daemon/backend/test/server_session_lifecycle_test.dart`.
+- Focused lifecycle tests: **8 passed**, independently rerun by the parent.
+- Agent full backend suite, serial run: **152 passed**; compile, formatting and
+  diff checks passed; analysis informational notices only.
+- One parallel suite run timed out in the existing subprocess lock probe; it
+  passed in isolation and serially. This environment-dependent flake is tracked,
+  not treated as a clean parallel-suite pass.
+- Tests cover contention/reset refusal, valid-token restart, revoked-token
+  rejection, pairing-secret non-restoration, storage/TLS/bind failure cleanup,
+  and revocation listener start/stop balance. Temporary fixtures only.
+
+### Next required work
+
+Production persistence enablement still requires an explicit storage-failure
+policy, directory durability safeguards and Windows/macOS verification. Shared
+state async-operation shutdown ordering also requires further auditing. No
+client/UI changes, commit or push.
