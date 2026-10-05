@@ -241,6 +241,117 @@ void main() {
       expect(manager.additions, 2);
     },
   );
+
+  test(
+    'running stop/start without an intermediate await leaves one listener',
+    () async {
+      final manager = _CountingManager();
+      final server = newServer(manager: manager);
+      await _bounded(server.startServer());
+
+      final stopping = server.stopServer();
+      final starting = server.startServer();
+      await _bounded(Future.wait([stopping, starting]));
+
+      expect(server.isRunning, isTrue);
+      expect(manager.listeners, 1);
+      await _expectReachable(server);
+    },
+  );
+
+  test(
+    'start/stop/start before initial startup completes finishes running',
+    () async {
+      final manager = _CountingManager();
+      final server = newServer(manager: manager);
+
+      final initialStart = server.startServer();
+      final queuedStop = server.stopServer();
+      final queuedStart = server.startServer();
+      await _bounded(Future.wait([initialStart, queuedStop, queuedStart]));
+
+      expect(server.isRunning, isTrue);
+      expect(manager.listeners, 1);
+      await _expectReachable(server);
+    },
+  );
+
+  test(
+    'duplicate concurrent stops cannot close the store of a queued restart',
+    () async {
+      final server = newServer();
+      await _bounded(server.startServer());
+
+      final firstStop = server.stopServer();
+      final secondStop = server.stopServer();
+      final restart = server.startServer();
+      await _bounded(Future.wait([firstStop, secondStop, restart]));
+
+      expect(server.isRunning, isTrue);
+      final competing = FileSessionStore(storePath);
+      expect(competing.resetSessions, throwsA(isA<SessionStoreException>()));
+      competing.close();
+      await _expectReachable(server);
+    },
+  );
+
+  test('duplicate concurrent stops leave one listener after restart', () async {
+    final manager = _CountingManager();
+    final server = newServer(manager: manager);
+    await _bounded(server.startServer());
+
+    final firstStop = server.stopServer();
+    final secondStop = server.stopServer();
+    final restart = server.startServer();
+    await _bounded(Future.wait([firstStop, secondStop, restart]));
+
+    expect(server.isRunning, isTrue);
+    expect(manager.listeners, 1);
+    expect(manager.additions, 2);
+    await _expectReachable(server);
+  });
+
+  test('failed bind queues stop, releases the lock, and can restart', () async {
+    final occupied = await _bounded(
+      HttpServer.bind(InternetAddress.loopbackIPv4, 0),
+    );
+    final server = newServer(port: occupied.port);
+    try {
+      final failedStart = server.startServer();
+      final queuedStop = server.stopServer();
+      await _bounded(Future.wait([failedStart, queuedStop]));
+      expect(server.isRunning, isFalse);
+
+      await _bounded(occupied.close(force: true));
+      final recovered = FileSessionStore(storePath);
+      expect(recovered.resetSessions, returnsNormally);
+      recovered.close();
+
+      await _bounded(server.startServer());
+      expect(server.isRunning, isTrue);
+      await _expectReachable(server);
+    } finally {
+      await occupied.close(force: true);
+    }
+  });
+}
+
+Future<T> _bounded<T>(Future<T> future) =>
+    future.timeout(const Duration(seconds: 3));
+
+Future<void> _expectReachable(DartServerService server) async {
+  final client = await _bounded(_connect(server));
+  final messages = StreamIterator<Map<String, dynamic>>(
+    client.map(
+      (message) => jsonDecode(message as String) as Map<String, dynamic>,
+    ),
+  );
+  try {
+    expect(await _next(messages), {'type': 'auth_required'});
+  } finally {
+    await _bounded(messages.cancel());
+    await _bounded(client.close());
+  }
 }
 
 Future<WebSocket> _connect(DartServerService server) =>

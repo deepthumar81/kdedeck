@@ -753,6 +753,40 @@ void main() {
     await restarted.messages.close();
   });
 
+  test('does not apply an in-flight action after stop and restart', () async {
+    final manager = AuthSessionManager(pairingCode: 'first');
+    final session = manager.authenticate('first', role: AuthRole.configAdmin)!;
+    executor.actionStarted = Completer<void>();
+    executor.actionRelease = Completer<void>();
+    server = _newServer(manager, executor, tempDirectory);
+    final initial = await _authenticatedSocket(server!, session.token);
+
+    initial.socket.add(
+      jsonEncode({'type': 'trigger_action', 'action': 'audio_mute_toggle'}),
+    );
+    await executor.actionStarted!.future.timeout(const Duration(seconds: 5));
+    expect(server!.isMuted, isFalse);
+
+    await server!.stopServer();
+    await initial.messages.close();
+    await initial.socket.close();
+
+    await server!.startServer();
+    final restarted = await _authenticatedSocket(server!, session.token);
+    expect(server!.isMuted, isFalse);
+
+    executor.actionRelease!.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(server!.isMuted, isFalse);
+    await expectLater(
+      restarted.messages.next().timeout(const Duration(milliseconds: 250)),
+      throwsA(isA<TimeoutException>()),
+    );
+
+    await restarted.messages.close();
+    await restarted.socket.close();
+  }, skip: !Platform.isLinux ? 'Linux command executor test' : false);
+
   test(
     'rate limits failed authentication without bypassing auth or actions',
     () async {
@@ -1007,6 +1041,8 @@ final class _RecordingExecutor implements CommandExecutor {
   final List<String> invocations = [];
   Completer<void>? discoveryStarted;
   Completer<void>? discoveryRelease;
+  Completer<void>? actionStarted;
+  Completer<void>? actionRelease;
 
   @override
   Future<ProcessResult> run(
@@ -1018,6 +1054,13 @@ final class _RecordingExecutor implements CommandExecutor {
     if (executable == 'snap' && discoveryStarted != null) {
       if (!discoveryStarted!.isCompleted) discoveryStarted!.complete();
       await discoveryRelease!.future;
+    }
+    if (executable == 'pactl' &&
+        arguments.length >= 2 &&
+        arguments[0] == 'set-sink-mute' &&
+        actionStarted != null) {
+      if (!actionStarted!.isCompleted) actionStarted!.complete();
+      await actionRelease!.future;
     }
     return ProcessResult(0, 0, '', '');
   }

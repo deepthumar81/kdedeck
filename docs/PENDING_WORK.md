@@ -37,6 +37,14 @@ security or UI/platform parity.
   Linux subprocess release/exit tested (Step 30).
 - [x] Integrate injected store acquisition/release/restart with standalone
   lifecycle; production persistence unchanged (Step 31).
+- [x] Fence stale standalone WebSocket upgrades, messages, and state-changing
+  continuations across stop/restart (Step 32).
+- [x] Serialize standalone start/stop requests in invocation order, including
+  overlapping restart and duplicate shutdown calls (Step 33).
+- [ ] Fence in-flight metrics ticks and HTTP preparation/routing against old
+  lifecycle generations; prevent overlapping metrics probes.
+- [ ] Define queued config-save shutdown semantics: stale queued writes must not
+  overwrite config loaded by a restarted server; drain or cancel safely.
 - [ ] Wire production persistence only with an explicit policy for
   marker-creation/storage failure. Verify
    directory durability, Windows replacement/ACLs, cross-platform locking and

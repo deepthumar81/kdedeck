@@ -1280,3 +1280,98 @@ Production persistence enablement still requires an explicit storage-failure
 policy, directory durability safeguards and Windows/macOS verification. Shared
 state async-operation shutdown ordering also requires further auditing. No
 client/UI changes, commit or push.
+
+## Step 32 — Fence stale WebSocket continuations across restart
+
+### Goal
+
+Prevent asynchronous work started by an old standalone WebSocket generation from
+attaching sockets to a restarted listener or mutating/broadcasting state after
+shutdown.
+
+### Changes made
+
+- Added a lifecycle generation barrier invalidated at the beginning of server
+  disposal. In-flight WebSocket upgrades now close instead of joining a newer
+  generation, and stale upgrade callbacks cannot corrupt the pending-connection
+  count.
+- Captured the generation for each accepted socket and ignored stale message
+  callbacks after stop/restart.
+- Revalidated the socket generation after awaited action, configuration-save,
+  and installed-app discovery work. Volume, mute, and brightness state now
+  change only after the awaited command completes while the original client is
+  still live.
+- Prevented delayed configuration continuations from assigning `configData`
+  after their generation has been disposed.
+- Added a deterministic regression test that blocks a mute command, stops and
+  restarts the server, then verifies the old continuation cannot change the new
+  server state or broadcast to the restarted client.
+
+### Verification
+
+- Focused stale-action regression: **PASS**.
+- Focused delayed-discovery regression: **PASS**.
+- Full backend suite serially with `dart test -j 1`: **PASS**, 153 tests.
+- `dart analyze`: **PASS** with 21 existing informational style notices and no
+  errors.
+- `dart format` and `git diff --check`: **PASS**.
+
+### Remaining limitations
+
+- Metrics ticks, queued configuration writes, and overlapping stop/start calls
+  still need a separate quiescence/serialization audit; this step fences the
+  WebSocket upgrade/message paths only.
+- Production session persistence remains disabled pending storage-failure,
+  durability, ACL, and cross-platform locking policy and verification.
+- Client authentication/UI, browser E2E, and physical platform QA remain
+  outstanding.
+
+### Next step
+
+Audit metrics callbacks and concurrent stop/start serialization, then continue
+with the highest-priority standalone security gap without enabling production
+persistence prematurely.
+
+## Step 33 — Serialize standalone lifecycle requests
+
+### Repository state and reproduced failure
+
+- Fetched `origin`: local HEAD and `origin/main` both remained at `a9d7c71`.
+  The four existing Step 32 modified files were still local; preserved them.
+- Starting a running server immediately after requesting stop, without awaiting
+  stop first, returned successfully but left `isRunning == false`. The old
+  `startServer()` fast path observed the pre-shutdown running flag.
+
+### Changes
+
+- Replaced startup-only tracking with a private lifecycle future queue. Every
+  start/stop request is enqueued at invocation time, and the running-state check
+  happens inside the queued start operation.
+- Startup failure still disposes directly, avoiding a queue self-deadlock.
+  An operation's error does not poison later queued lifecycle requests.
+- Added five regressions covering stop/start overlap, start/stop/start during
+  initial startup, duplicate stops with persistent-store and listener ownership,
+  and failed-bind cleanup followed by restart. Tests verify an actual WebSocket
+  connection, not only the running flag.
+- No change to production persistence enablement, clients, or app discovery.
+
+### Verification
+
+- Original isolated stop/start reproduction failed before the change and passed
+  after it (`isRunning == true`).
+- Lifecycle test file: **13 passed**.
+- Full backend `dart test -j 1 -r expanded`: **158 passed**.
+- `dart analyze`: no errors or warnings; **21 informational notices** remain.
+- Changed Dart files: format check passed; daemon executable compilation passed.
+- `git diff --check`: passed. No commit or push performed.
+
+### Remaining work and next slice
+
+Lifecycle command serialization does not drain all asynchronous work. Next:
+generation-fence metrics ticks (including awaited subprocess/file reads), prevent
+overlapping probes, and audit HTTP requests delayed in preparation before routing.
+Queued config saves also need an explicit drain/cancel policy: Step 32 prevents
+stale in-memory assignment but not stale disk writes after restart. Production
+persistence remains off until storage-failure, durability, and platform-safety
+requirements are resolved. Parallel lock-probe stability and browser/device QA
+were not reverified in this step.

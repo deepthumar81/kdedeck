@@ -167,7 +167,7 @@ class DartServerService {
   AuthSessionManager _authSessionManager;
   final FileSessionStore Function()? _sessionStoreFactory;
   FileSessionStore? _ownedSessionStore;
-  Future<void>? _starting;
+  Future<void> _lifecycleTail = Future<void>.value();
   final AuthRateLimiter _authRateLimiter;
   final String Function(HttpRequest request) _clientIdentityResolver;
   final ConfigValidator _configValidator;
@@ -186,6 +186,7 @@ class DartServerService {
   bool isSecure = false;
   int port;
   int _pendingConnections = 0;
+  int _lifecycleGeneration = 0;
   final Set<WebSocket> _rateLimitedClosing = <WebSocket>{};
   final Set<WebSocket> _oversizedFrameClosing = <WebSocket>{};
   final Map<WebSocket, int> _oversizedFrameViolations = <WebSocket, int>{};
@@ -366,13 +367,23 @@ class DartServerService {
     "ram_percent": 50,
   };
 
-  Future<void> startServer() {
-    if (isRunning) return Future<void>.value();
+  Future<void> _enqueueLifecycle(Future<void> Function() operation) {
+    // Queue at invocation time; a start requested during shutdown must wait
+    // for disposal rather than returning based on the old isRunning flag.
+    final request = _lifecycleTail.then<void>((_) => operation());
+    // Preserve this request's error for its caller without poisoning the queue.
+    _lifecycleTail = request.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+    return request;
+  }
 
-    if (_starting != null) return _starting!;
-    final starting = _startServer();
-    _starting = starting;
-    return starting.whenComplete(() => _starting = null);
+  Future<void> startServer() {
+    return _enqueueLifecycle(() async {
+      if (isRunning) return;
+      await _startServer();
+    });
   }
 
   Future<void> _startServer() async {
@@ -445,14 +456,21 @@ class DartServerService {
         return;
       }
       _pendingConnections++;
+      final generation = _lifecycleGeneration;
       try {
         final clientIdentity = _clientIdentityResolver(request);
         final socket = await WebSocketTransformer.upgrade(request);
-        _handleClientConnect(socket, clientIdentity);
+        if (!_isCurrentGeneration(generation) || !isRunning) {
+          await socket.close(WebSocketStatus.goingAway, 'Server stopping');
+          return;
+        }
+        _handleClientConnect(socket, clientIdentity, generation);
       } catch (_) {
         print("WS Upgrade Error");
       } finally {
-        _pendingConnections--;
+        if (_lifecycleGeneration == generation && _pendingConnections > 0) {
+          _pendingConnections--;
+        }
       }
     } else if (request.uri.path == '/system_icons' ||
         request.uri.path == '/system_icons/') {
@@ -631,12 +649,13 @@ class DartServerService {
     }
   }
 
-  Future<void> stopServer() async {
-    await _starting;
-    await _disposeServer();
-  }
+  Future<void> stopServer() => _enqueueLifecycle(_disposeServer);
 
   Future<void> _disposeServer() async {
+    // Invalidate every callback that was started by the previous listener
+    // before awaiting any socket or server shutdown operation. Dart futures
+    // cannot be cancelled, so continuations must fence themselves instead.
+    _lifecycleGeneration++;
     _authSessionManager.removeRevocationListener(_closeRevokedClients);
     _metricsTimer?.cancel();
     try {
@@ -670,7 +689,28 @@ class DartServerService {
     }
   }
 
-  void _handleClientConnect(WebSocket socket, String clientIdentity) {
+  bool _isCurrentGeneration(int generation) =>
+      generation == _lifecycleGeneration;
+
+  bool _isCurrentSocket(WebSocket socket, int generation) =>
+      _isCurrentGeneration(generation) &&
+      isRunning &&
+      _clients.contains(socket);
+
+  bool _isCurrentClient(WebSocket socket, int generation) {
+    if (!_isCurrentSocket(socket, generation)) return false;
+    return _sessionFor(socket) != null;
+  }
+
+  void _handleClientConnect(
+    WebSocket socket,
+    String clientIdentity,
+    int generation,
+  ) {
+    if (!_isCurrentGeneration(generation) || !isRunning) {
+      unawaited(socket.close(WebSocketStatus.goingAway, 'Server stopping'));
+      return;
+    }
     _clients.add(socket);
     _clientIdentities[socket] = clientIdentity;
     print("📱 Client connected! Total clients: ${_clients.length}");
@@ -680,7 +720,7 @@ class DartServerService {
 
     socket.listen(
       (message) {
-        unawaited(_handleMessage(message, socket));
+        unawaited(_handleMessage(message, socket, generation));
       },
       onDone: () {
         _removeClient(socket);
@@ -692,7 +732,12 @@ class DartServerService {
     );
   }
 
-  Future<void> _handleMessage(dynamic message, WebSocket socket) async {
+  Future<void> _handleMessage(
+    dynamic message,
+    WebSocket socket,
+    int generation,
+  ) async {
+    if (!_isCurrentGeneration(generation) || !_clients.contains(socket)) return;
     if (!_acceptFrame(message, socket)) return;
 
     final messageLimit = _webSocketRateLimiter.allowMessage(socket);
@@ -721,14 +766,24 @@ class DartServerService {
         final action = data['action'] ?? '';
         final payload = data['payload']?.toString() ?? '';
         final value = data['value'];
-        await _executeAction(action, payload, value);
+        await _executeAction(
+          action,
+          payload,
+          value,
+          socket: socket,
+          generation: generation,
+        );
       } else if (type == 'save_config') {
         final session = _sessionFor(socket);
         if (!_requireCapability(socket, session, AuthCapability.configAdmin)) {
           return;
         }
         if (data['config'] != null) {
-          final savedConfig = await _saveConfigLocal(data['config']);
+          final savedConfig = await _saveConfigLocal(
+            data['config'],
+            generation: generation,
+          );
+          if (!_isCurrentSocket(socket, generation)) return;
           if (savedConfig == null) {
             _sendToSocket(socket, {
               "type": "config_error",
@@ -751,7 +806,7 @@ class DartServerService {
         if (!_requireCapability(socket, session, AuthCapability.configAdmin)) {
           return;
         }
-        await _sendSystemApps(socket);
+        await _sendSystemApps(socket, generation: generation);
       }
     } catch (_) {
       // Invalid or malformed frames are ignored without logging their data.
@@ -993,11 +1048,14 @@ class DartServerService {
     });
   }
 
-  Future<void> _sendSystemApps(WebSocket socket) async {
+  Future<void> _sendSystemApps(
+    WebSocket socket, {
+    required int generation,
+  }) async {
     final apps = await SystemActionsService.getInstalledApps(
       executor: _commandExecutor,
     );
-    if (!_clients.contains(socket)) return;
+    if (!_isCurrentSocket(socket, generation)) return;
     if (!_requireCapability(
       socket,
       _sessionFor(socket),
@@ -1038,8 +1096,10 @@ class DartServerService {
   Future<void> _executeAction(
     String action,
     String payload,
-    dynamic value,
-  ) async {
+    dynamic value, {
+    required WebSocket socket,
+    required int generation,
+  }) async {
     switch (action) {
       case 'launch_app':
       case 'open_url':
@@ -1052,8 +1112,9 @@ class DartServerService {
       case 'audio_volume':
         if (value != null) {
           final vol = (value as num).toInt().clamp(0, 100);
-          currentVolume = vol;
           await SystemActionsService.setVolume(vol, executor: _commandExecutor);
+          if (!_isCurrentClient(socket, generation)) return;
+          currentVolume = vol;
           _broadcast({
             "type": "state_update",
             "key": "volume",
@@ -1063,8 +1124,9 @@ class DartServerService {
         break;
 
       case 'audio_mute_toggle':
-        isMuted = !isMuted;
         await SystemActionsService.toggleMute(executor: _commandExecutor);
+        if (!_isCurrentClient(socket, generation)) return;
+        isMuted = !isMuted;
         _broadcast({
           "type": "state_update",
           "key": "is_muted",
@@ -1075,11 +1137,12 @@ class DartServerService {
       case 'brightness':
         if (value != null) {
           final b = (value as num).toInt().clamp(5, 100);
-          currentBrightness = b;
           await SystemActionsService.setBrightness(
             b,
             executor: _commandExecutor,
           );
+          if (!_isCurrentClient(socket, generation)) return;
+          currentBrightness = b;
           _broadcast({
             "type": "state_update",
             "key": "brightness",
@@ -1256,13 +1319,17 @@ class DartServerService {
         : InternetAddress.loopbackIPv4;
   }
 
-  Future<Map<String, dynamic>?> _saveConfigLocal(Object? candidate) {
+  Future<Map<String, dynamic>?> _saveConfigLocal(
+    Object? candidate, {
+    required int generation,
+  }) {
     final validation = _configValidator.validate(candidate);
     final validated = validation.config;
     if (validated == null) return Future<Map<String, dynamic>?>.value(null);
 
     final operation = _saveOperation.then((_) async {
       if (!await _writeConfigAtomically(validated, configData)) return null;
+      if (!_isCurrentGeneration(generation)) return null;
       configData = validated;
       return validated;
     });
