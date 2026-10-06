@@ -1696,4 +1696,43 @@ can hide unsupported controls without changing server-side authorization.
 ### Scope boundary
 
 Client UI consumption, version negotiation, compatibility enforcement, and
-embedded Flutter convergence remain future work. No commit or push performed.
+embedded Flutter convergence remain future work.
+
+## Step 42 — Add a backward-compatible config schema marker
+
+### Goal
+
+Create a small compatibility boundary for future configuration migrations
+without requiring an older installation to be removed or rewriting legacy files
+just because they omit a version marker.
+
+### Changes
+
+- Added `currentConfigSchemaVersion` with value `1` to the standalone validator.
+- Legacy configs without `config_schema_version` are accepted and normalized in
+  memory; explicit version `1` is accepted, while other values return the
+  bounded `unsupported_config_version` error.
+- New default configs include `config_schema_version: 1`.
+- Added validator, daemon-default, and protocol documentation coverage.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/config_validator.dart`
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/config_validator_test.dart`
+- `deckboard_daemon/backend/test/dart_server_config_test.dart`
+- `docs/protocol.md`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `dart test test/config_validator_test.dart test/dart_server_config_test.dart
+  -r compact`: **PASS**, 20 tests.
+- `dart format --set-exit-if-changed ...`: **PASS**, no files changed.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This adds a compatibility marker only. Version migrations, protocol negotiation,
+production persistence enablement, and release updater behavior remain pending.

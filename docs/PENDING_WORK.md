@@ -68,6 +68,8 @@ security or UI/platform parity.
   trees across platforms; remove fabricated metrics.
 - [ ] Config revision/conflict detection, restrictive file permissions, injected
   persistence failure tests, cross-platform atomic replacement verification.
+- [x] Add a backward-compatible `config_schema_version` marker and reject
+  unsupported versions without rewriting legacy files (Step 42).
 - [ ] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
   user-local Flatpak and package icon roots with no feature regression.
 - [ ] TLS certificate provisioning, verified fingerprint/trust workflow, expiry

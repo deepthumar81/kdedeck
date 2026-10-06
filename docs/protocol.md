@@ -260,6 +260,7 @@ is therefore not a Windows/macOS system-control implementation
 {
   "type": "save_config",
   "config": {
+    "config_schema_version": 1,
     "boards": [
       {
         "id": "board_default",
@@ -274,6 +275,11 @@ is therefore not a Windows/macOS system-control implementation
 ```
 
 The standalone server accepts a strict JSON map with a top-level `boards` list.
+`config_schema_version` is optional for legacy clients; omitted values are
+normalized to the current version, `1`. Other versions are rejected with the
+bounded `unsupported_config_version` validation result. This marker is a
+compatibility boundary, not a migration engine; existing user files are not
+rewritten merely because they omit it.
 Boards require non-empty unique `id` values and an `items` list; grid dimensions
 and item spans/coordinates must be positive integers within the board. Item
 fields commonly include `id`, `title`, `type`, `action`, `payload`, `icon`,
