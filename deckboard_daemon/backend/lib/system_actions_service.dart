@@ -103,51 +103,60 @@ class SystemActionsService {
     return 'eDP-1';
   }
 
-  static Future<void> executeLaunch(
+  static Future<bool> executeLaunch(
     String payload, {
     CommandExecutor? executor,
   }) async {
-    if (payload.isEmpty) return;
+    if (payload.isEmpty) return false;
     final commandExecutor = executor ?? SystemActionsService.commandExecutor;
     try {
       if (_looksLikeUrl(payload)) {
         final url = _validatedHttpUrl(payload);
         // Anything that looks like a URI must be a valid HTTP(S) URL. Do not
         // reinterpret rejected schemes or malformed URLs as shell commands.
-        if (url == null) return;
+        if (url == null) return false;
         if (Platform.isLinux) {
-          await commandExecutor.run(
+          final result = await commandExecutor.run(
             'xdg-open',
             [payload],
             environment: {'DISPLAY': ':0'},
           );
+          return result.exitCode == 0;
         } else if (Platform.isWindows) {
           // explorer.exe opens HTTP(S) URLs without passing the value through
           // cmd.exe, where URL metacharacters would become shell syntax.
-          await commandExecutor.run('explorer.exe', [payload]);
+          final result = await commandExecutor.run('explorer.exe', [payload]);
+          return result.exitCode == 0;
         } else if (Platform.isMacOS) {
-          await commandExecutor.run('open', [payload]);
+          final result = await commandExecutor.run('open', [payload]);
+          return result.exitCode == 0;
         }
-        return;
+        return false;
       }
 
       final launch = DesktopEntryParser.parseExec(payload);
-      if (launch == null) return;
+      if (launch == null) return false;
 
       if (Platform.isLinux) {
-        await commandExecutor.run(
+        final result = await commandExecutor.run(
           launch.executable,
           launch.arguments,
           environment: {'DISPLAY': ':0'},
         );
+        return result.exitCode == 0;
       } else if (Platform.isWindows || Platform.isMacOS) {
         // Keep the platform branches explicit while using the same argv-safe
         // path. Do not reintroduce cmd.exe or a shell as a fallback.
-        await commandExecutor.run(launch.executable, launch.arguments);
+        final result = await commandExecutor.run(
+          launch.executable,
+          launch.arguments,
+        );
+        return result.exitCode == 0;
       }
-    } catch (e) {
-      print("❌ [SystemActionsService] Launch error: $e");
+    } catch (_) {
+      return false;
     }
+    return false;
   }
 
   static Future<bool> setVolume(int volume, {CommandExecutor? executor}) async {
@@ -258,51 +267,63 @@ class SystemActionsService {
     return false;
   }
 
-  static Future<void> executeMpris(
+  static Future<bool> executeMpris(
     String payload, {
     CommandExecutor? executor,
   }) async {
-    if (payload.isEmpty) return;
+    if (payload.isEmpty) return false;
     final commandExecutor = executor ?? SystemActionsService.commandExecutor;
     try {
       if (payload == 'volume_up') {
         if (Platform.isLinux) {
-          await commandExecutor.run('pactl', [
+          final pactl = await commandExecutor.run('pactl', [
             'set-sink-volume',
             '@DEFAULT_SINK@',
             '+5%',
           ]);
-          await commandExecutor.run('amixer', [
+          final amixer = await commandExecutor.run('amixer', [
             '-D',
             'pulse',
             'sset',
             'Master',
             '5%+',
           ]);
+          return pactl.exitCode == 0 && amixer.exitCode == 0;
         }
-        return;
+        return false;
       }
       if (payload == 'volume_down') {
         if (Platform.isLinux) {
-          await commandExecutor.run('pactl', [
+          final pactl = await commandExecutor.run('pactl', [
             'set-sink-volume',
             '@DEFAULT_SINK@',
             '-5%',
           ]);
-          await commandExecutor.run('amixer', [
+          final amixer = await commandExecutor.run('amixer', [
             '-D',
             'pulse',
             'sset',
             'Master',
             '5%-',
           ]);
+          return pactl.exitCode == 0 && amixer.exitCode == 0;
         }
-        return;
+        return false;
       }
       if (payload == 'mute') {
-        await toggleMute(executor: commandExecutor);
-        return;
+        return await toggleMute(executor: commandExecutor);
       }
+
+      final method = switch (payload) {
+        'play-pause' || 'play_pause' => 'PlayPause',
+        'next' => 'Next',
+        'previous' => 'Previous',
+        'stop' => 'Stop',
+        'play' => 'Play',
+        'pause' => 'Pause',
+        _ => '',
+      };
+      if (method.isEmpty) return false;
 
       if (Platform.isLinux) {
         final dbusRes = await commandExecutor.run('dbus-send', [
@@ -323,58 +344,50 @@ class SystemActionsService {
               .where((n) => n.isNotEmpty)
               .toList();
 
-          String method = '';
-          if (payload == 'play-pause' || payload == 'play_pause') {
-            method = 'PlayPause';
-          } else if (payload == 'next') {
-            method = 'Next';
-          } else if (payload == 'previous') {
-            method = 'Previous';
-          } else if (payload == 'stop') {
-            method = 'Stop';
-          } else if (payload == 'play') {
-            method = 'Play';
-          } else if (payload == 'pause') {
-            method = 'Pause';
+          if (mprisNames.isEmpty) return false;
+          for (var mpris in mprisNames) {
+            final result = await commandExecutor.run('dbus-send', [
+              '--print-reply',
+              '--dest=$mpris',
+              '/org/mpris/MediaPlayer2',
+              'org.mpris.MediaPlayer2.Player.$method',
+            ]);
+            if (result.exitCode != 0) return false;
           }
-
-          if (method.isNotEmpty) {
-            for (var mpris in mprisNames) {
-              await commandExecutor.run('dbus-send', [
-                '--print-reply',
-                '--dest=$mpris',
-                '/org/mpris/MediaPlayer2',
-                'org.mpris.MediaPlayer2.Player.$method',
-              ]);
-            }
-          }
+          return true;
         }
+        return false;
       } else if (Platform.isWindows) {
         // TODO: Implement Windows media keys
       } else if (Platform.isMacOS) {
         // TODO: Implement macOS media keys
       }
-    } catch (e) {
-      print("❌ [SystemActionsService] Media error: $e");
+    } catch (_) {
+      return false;
     }
+    return false;
   }
 
-  static Future<void> executeKdeAction(
+  static Future<bool> executeKdeAction(
     String payload, {
     CommandExecutor? executor,
   }) async {
-    if (payload.isEmpty) return;
+    if (payload.isEmpty) return false;
     final commandExecutor = executor ?? SystemActionsService.commandExecutor;
     try {
       if (Platform.isLinux) {
         final action = _kdeActions[payload];
-        if (action != null) {
-          await commandExecutor.run(action.executable, action.arguments);
-        }
+        if (action == null) return false;
+        final result = await commandExecutor.run(
+          action.executable,
+          action.arguments,
+        );
+        return result.exitCode == 0;
       }
-    } catch (e) {
-      print("❌ [SystemActionsService] KDE Action error: $e");
+    } catch (_) {
+      return false;
     }
+    return false;
   }
 
   static Future<List<Map<String, dynamic>>> getInstalledApps({

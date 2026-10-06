@@ -41,10 +41,12 @@ security or UI/platform parity.
   continuations across stop/restart (Step 32).
 - [x] Serialize standalone start/stop requests in invocation order, including
   overlapping restart and duplicate shutdown calls (Step 33).
-- [ ] Fence in-flight metrics ticks and HTTP preparation/routing against old
-  lifecycle generations; prevent overlapping metrics probes.
-- [ ] Define queued config-save shutdown semantics: stale queued writes must not
-  overwrite config loaded by a restarted server; drain or cancel safely.
+- [x] Fence in-flight metrics ticks and prevent overlapping metrics probes
+  across stop/restart (Step 34).
+- [x] Fence in-flight HTTP preparation/routing against old lifecycle
+  generations (Step 35).
+- [x] Define queued config-save shutdown semantics: stale queued writes must not
+  overwrite config loaded by a restarted server; drain or cancel safely (Step 36).
 - [ ] Wire production persistence only with an explicit policy for
   marker-creation/storage failure. Verify
    directory durability, Windows replacement/ACLs, cross-platform locking and
@@ -56,8 +58,10 @@ security or UI/platform parity.
 - [ ] Sensitive power/session action authorization and confirmation.
 - [ ] Restrict application execution to approved identities; no arbitrary
   executable or interpreter invocation even when argv has no shell syntax.
-- [ ] Action results/errors, subprocess timeouts and bounded execution, correct
-  state after command failures; remove fabricated metrics.
+- [x] Return bounded action results/errors and preserve state after command
+  failures (Step 37).
+- [ ] Add subprocess timeouts, cancellation/kill semantics, and bounded action
+  execution; remove fabricated metrics.
 - [ ] Config revision/conflict detection, restrictive file permissions, injected
   persistence failure tests, cross-platform atomic replacement verification.
 - [ ] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
@@ -80,6 +84,11 @@ security or UI/platform parity.
 - [ ] Add the planned plugins/features only after security/UX baseline acceptance.
 - [ ] CI, packaging, clean-install/upgrade/recovery tests, release checks and docs
   synchronization (architecture and older baseline descriptions are historical).
+- [ ] Define versioned in-place app updates for the Linux daemon and Flutter app:
+  monotonic release/build metadata, stable package identity, preserved user
+  configuration and session data, explicit migrations and protocol compatibility,
+  signed artifacts, atomic replacement with rollback, and clean-install/upgrade
+  tests. Never require uninstalling the older version before a successful update.
 
 Completed slices so far: documentation baseline, test/executor seams, standalone
 auth gates, per-peer failed-attempt throttling, config validation/backup, bounded

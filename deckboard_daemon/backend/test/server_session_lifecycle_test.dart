@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:backend/auth_session_manager.dart';
+import 'package:backend/command_executor.dart';
 import 'package:backend/dart_server_service.dart';
 import 'package:backend/session_store.dart';
 import 'package:test/test.dart';
@@ -29,6 +30,8 @@ void main() {
     int port = 0,
     Map<String, String> environment = const {},
     AuthSessionManager? manager,
+    CommandExecutor? commandExecutor,
+    Duration metricsInterval = const Duration(seconds: 4),
   }) {
     final server = DartServerService.forTesting(
       port: port,
@@ -39,6 +42,8 @@ void main() {
       sessionStoreFactory: manager == null
           ? () => FileSessionStore(path ?? storePath)
           : null,
+      commandExecutor: commandExecutor,
+      metricsInterval: metricsInterval,
     );
     servers.add(server);
     return server;
@@ -334,6 +339,57 @@ void main() {
       await occupied.close(force: true);
     }
   });
+
+  test('metrics probes are fenced and never overlap across restart', () async {
+    if (!Platform.isLinux) return;
+
+    final executor = _BlockingMetricsExecutor();
+    final server = newServer(
+      commandExecutor: executor,
+      metricsInterval: const Duration(milliseconds: 1),
+    );
+    WebSocket? client;
+    WebSocket? restartedClient;
+    try {
+      await _bounded(server.startServer());
+      client = await _bounded(_connect(server));
+      await _bounded(executor.firstPactlStarted.future);
+
+      // Timer.periodic does not await an async callback. Repeated ticks while
+      // pactl is blocked must still leave only one external probe in flight.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(executor.callCount, 1);
+      expect(executor.maxConcurrent, 1);
+
+      final initialVolume = server.currentVolume;
+      final initialMute = server.isMuted;
+      final initialBrightness = server.currentBrightness;
+
+      await _bounded(server.stopServer());
+      await _bounded(server.startServer());
+      final connectedClient = await _bounded(_connect(server));
+      restartedClient = connectedClient;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(executor.callCount, 1);
+      expect(executor.maxConcurrent, 1);
+
+      // The old generation returns a value that would be observable if its
+      // continuation were allowed to mutate state after restart.
+      await connectedClient.close();
+      restartedClient = null;
+      executor.releaseFirst(ProcessResult(0, 0, '10%\n', ''));
+      await _bounded(executor.firstPactlCompleted.future);
+      await Future<void>.delayed(Duration.zero);
+      expect(server.currentVolume, initialVolume);
+      expect(server.isMuted, initialMute);
+      expect(server.currentBrightness, initialBrightness);
+    } finally {
+      executor.releaseFirst(ProcessResult(0, 0, '10%\n', ''));
+      await client?.close();
+      await restartedClient?.close();
+      await server.stopServer();
+    }
+  });
 }
 
 Future<T> _bounded<T>(Future<T> future) =>
@@ -381,5 +437,44 @@ class _CountingManager extends AuthSessionManager {
   void removeRevocationListener(void Function() listener) {
     super.removeRevocationListener(listener);
     if (listeners > 0) listeners--;
+  }
+}
+
+final class _BlockingMetricsExecutor implements CommandExecutor {
+  final Completer<void> firstPactlStarted = Completer<void>();
+  final Completer<void> firstPactlCompleted = Completer<void>();
+  final Completer<ProcessResult> _firstPactlResult = Completer<ProcessResult>();
+
+  int callCount = 0;
+  int concurrent = 0;
+  int maxConcurrent = 0;
+
+  @override
+  Future<ProcessResult> run(
+    String executable,
+    List<String> arguments, {
+    Map<String, String>? environment,
+  }) {
+    if (executable != 'pactl') {
+      return Future<ProcessResult>.value(ProcessResult(0, 0, '', ''));
+    }
+
+    callCount++;
+    concurrent++;
+    if (concurrent > maxConcurrent) maxConcurrent = concurrent;
+    final result = callCount == 1
+        ? _firstPactlResult.future
+        : Future<ProcessResult>.value(ProcessResult(0, 0, '50%\n', ''));
+    if (callCount == 1) firstPactlStarted.complete();
+    return result.whenComplete(() {
+      concurrent--;
+      if (callCount == 1 && !firstPactlCompleted.isCompleted) {
+        firstPactlCompleted.complete();
+      }
+    });
+  }
+
+  void releaseFirst(ProcessResult result) {
+    if (!_firstPactlResult.isCompleted) _firstPactlResult.complete(result);
   }
 }

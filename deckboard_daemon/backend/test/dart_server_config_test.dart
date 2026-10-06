@@ -146,6 +146,72 @@ void main() {
     await client.close();
   });
 
+  test(
+    'stop drains in-flight saves and fences queued saves across restart',
+    () async {
+      final path = '${tempDirectory.path}/deckboard_config.json';
+      await File(path).writeAsString(jsonEncode(_config('existing')));
+      final firstWriteStarted = Completer<void>();
+      final releaseFirstWrite = Completer<bool>();
+      final writes = <String>[];
+
+      server = DartServerService.forTesting(
+        port: 0,
+        configPath: path,
+        authSessionManager: AuthSessionManager(pairingCode: 'pairing-code'),
+        configWriter: (config, _) {
+          writes.add(config['boards'][0]['id'] as String);
+          if (!firstWriteStarted.isCompleted) {
+            firstWriteStarted.complete();
+            return releaseFirstWrite.future;
+          }
+          return Future<bool>.value(true);
+        },
+      );
+      _Connection? connection;
+      try {
+        connection = await _authenticatedClient(server!);
+        final client = connection.socket;
+
+        client.add(
+          jsonEncode({'type': 'save_config', 'config': _config('first')}),
+        );
+        await _bounded(firstWriteStarted.future);
+
+        client.add(
+          jsonEncode({'type': 'save_config', 'config': _config('queued')}),
+        );
+        // Let the websocket callback enqueue the second save without using an
+        // arbitrary timing delay.
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        var stopped = false;
+        final stopping = server!.stopServer().then((_) => stopped = true);
+        await Future<void>.value();
+        expect(stopped, isFalse);
+        expect(server!.isRunning, isTrue);
+
+        releaseFirstWrite.complete(true);
+        await _bounded(stopping);
+
+        expect(writes, ['first']);
+        expect(server!.configData?['boards'][0]['id'], 'existing');
+        expect(
+          jsonDecode(await File(path).readAsString())['boards'][0]['id'],
+          'existing',
+        );
+
+        await _bounded(server!.startServer());
+        expect(server!.configData?['boards'][0]['id'], 'existing');
+      } finally {
+        if (!releaseFirstWrite.isCompleted) releaseFirstWrite.complete(true);
+        await connection?.messages.close();
+        await connection?.socket.close();
+      }
+    },
+  );
+
   test('startup recovers a valid backup when the primary is corrupt', () async {
     final path = '${tempDirectory.path}/deckboard_config.json';
     server = _newServer(path);
@@ -220,6 +286,9 @@ Map<String, dynamic> _config(String id) => {
     },
   ],
 };
+
+Future<T> _bounded<T>(Future<T> future) =>
+    future.timeout(const Duration(seconds: 3));
 
 final class _MessageReader {
   _MessageReader(this.socket) : _iterator = StreamIterator<dynamic>(socket);

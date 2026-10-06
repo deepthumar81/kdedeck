@@ -49,6 +49,17 @@ class DartServerService {
     return value;
   }
 
+  static Duration _validateMetricsInterval(Duration value) {
+    if (value <= Duration.zero) {
+      throw ArgumentError.value(
+        value,
+        'metricsInterval',
+        'must be greater than zero',
+      );
+    }
+    return value;
+  }
+
   DartServerService._internal()
     : port = 8484,
       _bindAddress = InternetAddress.loopbackIPv4,
@@ -69,7 +80,9 @@ class DartServerService {
       _maxRequestHeaderBytes = defaultMaxRequestHeaderBytes,
       _maxRequestHeaderCount = defaultMaxRequestHeaderCount,
       _maxRequestBodyBytes = defaultMaxRequestBodyBytes,
-      _webSocketRateLimiter = WebSocketRateLimiter();
+      _webSocketRateLimiter = WebSocketRateLimiter(),
+      _metricsInterval = const Duration(seconds: 4),
+      _configWriter = null;
 
   /// Creates an isolated server for protocol tests.
   ///
@@ -103,6 +116,9 @@ class DartServerService {
     Duration rateLimitWindow = WebSocketRateLimiter.defaultWindow,
     int maxRateLimitViolations = WebSocketRateLimiter.defaultMaxViolations,
     DateTime Function()? clock,
+    Duration metricsInterval = const Duration(seconds: 4),
+    Future<bool> Function(Map<String, dynamic>, Map<String, dynamic>?)?
+    configWriter,
   }) : port = port,
        _bindAddress = bindAddress ?? InternetAddress.loopbackIPv4,
        _bindAddressOverride = bindAddress,
@@ -149,7 +165,9 @@ class DartServerService {
              window: rateLimitWindow,
              maxViolations: maxRateLimitViolations,
              clock: clock,
-           ) {
+           ),
+       _metricsInterval = _validateMetricsInterval(metricsInterval),
+       _configWriter = configWriter {
     if (authSessionManager != null && sessionStoreFactory != null) {
       throw ArgumentError(
         'authSessionManager and sessionStoreFactory are mutually exclusive',
@@ -181,6 +199,9 @@ class DartServerService {
   final int _maxRequestHeaderCount;
   final int _maxRequestBodyBytes;
   final WebSocketRateLimiter _webSocketRateLimiter;
+  final Duration _metricsInterval;
+  final Future<bool> Function(Map<String, dynamic>, Map<String, dynamic>?)?
+  _configWriter;
   Future<void> _saveOperation = Future<void>.value();
   bool isRunning = false;
   bool isSecure = false;
@@ -222,6 +243,7 @@ class DartServerService {
   int currentBrightness = 70;
   bool isMuted = false;
   Timer? _metricsTimer;
+  Object? _metricsProbeToken;
 
   String? _resolveSystemIconPath(String requestedPath) {
     if (!Platform.isLinux) return null;
@@ -240,7 +262,7 @@ class DartServerService {
     }
   }
 
-  Future<File?> _resolveFrontendFile(Uri uri) async {
+  Future<File?> _resolveFrontendFile(Uri uri, {required int generation}) async {
     final root = _canonicalFrontendRoot;
     if (root == null) return null;
 
@@ -300,10 +322,12 @@ class DartServerService {
     } catch (_) {
       return null;
     }
+    if (!_isCurrentHttpGeneration(generation)) return null;
     if (!path.isWithin(root, canonicalPath)) return null;
 
     try {
       final stat = await FileStat.stat(canonicalPath);
+      if (!_isCurrentHttpGeneration(generation)) return null;
       if (stat.type != FileSystemEntityType.file) return null;
       return File(canonicalPath);
     } catch (_) {
@@ -424,8 +448,19 @@ class DartServerService {
 
       _server!.listen(
         (HttpRequest request) async {
-          if (!await _prepareHttpRequest(request)) return;
-          await _routeHttpRequest(request);
+          final generation = _lifecycleGeneration;
+          if (!_isCurrentHttpGeneration(generation)) {
+            await _rejectStaleHttpRequest(request);
+            return;
+          }
+          if (!await _prepareHttpRequest(request, generation: generation)) {
+            return;
+          }
+          if (!_isCurrentHttpGeneration(generation)) {
+            await _rejectStaleHttpRequest(request, bodyAlreadyOwned: true);
+            return;
+          }
+          await _routeHttpRequest(request, generation: generation);
         },
         onError: (_, __) {
           // Dart's HttpServer parser closes malformed request-line/header
@@ -444,7 +479,14 @@ class DartServerService {
     }
   }
 
-  Future<void> _routeHttpRequest(HttpRequest request) async {
+  Future<void> _routeHttpRequest(
+    HttpRequest request, {
+    required int generation,
+  }) async {
+    if (!_isCurrentHttpGeneration(generation)) {
+      await _rejectStaleHttpRequest(request, bodyAlreadyOwned: true);
+      return;
+    }
     _applyHttpResponsePolicy(request.response);
     if (request.uri.path == '/ws') {
       if (!_originMatchesRequestHost(request)) {
@@ -456,7 +498,6 @@ class DartServerService {
         return;
       }
       _pendingConnections++;
-      final generation = _lifecycleGeneration;
       try {
         final clientIdentity = _clientIdentityResolver(request);
         final socket = await WebSocketTransformer.upgrade(request);
@@ -486,7 +527,12 @@ class DartServerService {
           }
 
           final file = File(resolvedPath);
-          if (await file.exists()) {
+          final exists = await file.exists();
+          if (!_isCurrentHttpGeneration(generation)) {
+            await _rejectStaleHttpRequest(request, bodyAlreadyOwned: true);
+            return;
+          }
+          if (exists) {
             final ext = resolvedPath.split('.').last.toLowerCase();
             var contentType = 'image/png';
             if (ext == 'svg')
@@ -497,7 +543,11 @@ class DartServerService {
             request.response.headers.contentType = ContentType.parse(
               contentType,
             );
-            await file.openRead().pipe(request.response);
+            if (!await _serveHttpFile(request, file, generation)) {
+              request.response
+                ..statusCode = HttpStatus.internalServerError
+                ..close();
+            }
             return;
           }
         }
@@ -515,17 +565,55 @@ class DartServerService {
         final uri = requestedUri.path == '/'
             ? requestedUri.replace(path: '/index.html')
             : requestedUri;
-        final file = await _resolveFrontendFile(uri);
+        final file = await _resolveFrontendFile(uri, generation: generation);
+        if (!_isCurrentHttpGeneration(generation)) {
+          await _rejectStaleHttpRequest(request, bodyAlreadyOwned: true);
+          return;
+        }
         if (file == null) {
           _sendFrontendNotFound(request.response);
           return;
         }
 
         request.response.headers.contentType = _frontendContentType(file.path);
-        await file.openRead().pipe(request.response);
+        if (!await _serveHttpFile(request, file, generation)) {
+          _sendFrontendNotFound(request.response);
+        }
       } catch (_) {
-        _sendFrontendNotFound(request.response);
+        if (_isCurrentHttpGeneration(generation)) {
+          _sendFrontendNotFound(request.response);
+        } else {
+          await _closeHttpResponse(request.response);
+        }
       }
+    }
+  }
+
+  Future<bool> _serveHttpFile(
+    HttpRequest request,
+    File file,
+    int generation,
+  ) async {
+    try {
+      await for (final chunk in file.openRead()) {
+        if (!_isCurrentHttpGeneration(generation)) {
+          await _closeHttpResponse(request.response);
+          return true;
+        }
+        request.response.add(chunk);
+      }
+      if (!_isCurrentHttpGeneration(generation)) {
+        await _closeHttpResponse(request.response);
+        return true;
+      }
+      await request.response.close();
+      return true;
+    } catch (_) {
+      if (!_isCurrentHttpGeneration(generation)) {
+        await _closeHttpResponse(request.response);
+        return true;
+      }
+      return false;
     }
   }
 
@@ -582,7 +670,7 @@ class DartServerService {
     if (contentLength > _maxRequestBodyBytes) {
       // Mark the body as owned before closing the response. Otherwise the
       // public HttpResponse.close() API may drain an unbounded body for us.
-      request.listen(null, onError: (_, __) {});
+      request.listen(null, onError: (_, _) {});
       return _RequestLimitFailure.tooLarge;
     }
     if (contentLength == 0) return null;
@@ -611,15 +699,30 @@ class DartServerService {
         .contains('upgrade');
   }
 
-  Future<bool> _prepareHttpRequest(HttpRequest request) async {
+  Future<bool> _prepareHttpRequest(
+    HttpRequest request, {
+    required int generation,
+  }) async {
+    if (!_isCurrentHttpGeneration(generation)) {
+      await _rejectStaleHttpRequest(request);
+      return false;
+    }
     _applyHttpResponsePolicy(request.response);
     final envelopeFailure = await _validateHttpRequestEnvelope(request);
+    if (!_isCurrentHttpGeneration(generation)) {
+      await _rejectStaleHttpRequest(request, bodyAlreadyOwned: false);
+      return false;
+    }
     if (envelopeFailure != null) {
       await _rejectHttpRequest(request, envelopeFailure);
       return false;
     }
 
     final bodyFailure = await _validateHttpRequestBody(request);
+    if (!_isCurrentHttpGeneration(generation)) {
+      await _rejectStaleHttpRequest(request, bodyAlreadyOwned: true);
+      return false;
+    }
     if (bodyFailure != null) {
       await _rejectHttpRequest(request, bodyFailure);
       return false;
@@ -649,6 +752,35 @@ class DartServerService {
     }
   }
 
+  Future<void> _rejectStaleHttpRequest(
+    HttpRequest request, {
+    bool bodyAlreadyOwned = false,
+  }) async {
+    _applyHttpResponsePolicy(request.response);
+    if (!bodyAlreadyOwned && !_isHttpUpgrade(request)) {
+      // Take ownership before closing the response. Otherwise the HTTP
+      // response API may try to drain a body that belongs to a stale request.
+      request.listen(null, onError: (_, _) {});
+    }
+    try {
+      request.response
+        ..statusCode = HttpStatus.serviceUnavailable
+        ..persistentConnection = false
+        ..headers.contentLength = 0;
+      await request.response.close();
+    } catch (_) {
+      // The listener may already have been closed by server shutdown.
+    }
+  }
+
+  Future<void> _closeHttpResponse(HttpResponse response) async {
+    try {
+      await response.close();
+    } catch (_) {
+      // The listener may already have been closed by server shutdown.
+    }
+  }
+
   Future<void> stopServer() => _enqueueLifecycle(_disposeServer);
 
   Future<void> _disposeServer() async {
@@ -656,6 +788,11 @@ class DartServerService {
     // before awaiting any socket or server shutdown operation. Dart futures
     // cannot be cancelled, so continuations must fence themselves instead.
     _lifecycleGeneration++;
+    // Do not release the old server/store or let a queued restart load the
+    // config until every save already in the queue has settled. The queue is
+    // kept error-safe by [_saveConfigLocal], so this await cannot poison the
+    // lifecycle queue or deadlock on a failed write.
+    await _saveOperation;
     _authSessionManager.removeRevocationListener(_closeRevokedClients);
     _metricsTimer?.cancel();
     try {
@@ -691,6 +828,12 @@ class DartServerService {
 
   bool _isCurrentGeneration(int generation) =>
       generation == _lifecycleGeneration;
+
+  bool _isCurrentHttpGeneration(int generation) =>
+      _isCurrentGeneration(generation) && isRunning;
+
+  bool _isCurrentMetricsGeneration(int generation) =>
+      _isCurrentGeneration(generation) && isRunning;
 
   bool _isCurrentSocket(WebSocket socket, int generation) =>
       _isCurrentGeneration(generation) &&
@@ -763,16 +906,30 @@ class DartServerService {
         if (!_requireCapability(socket, session, AuthCapability.control)) {
           return;
         }
-        final action = data['action'] ?? '';
+        final action = data['action'] is String ? data['action'] as String : '';
         final payload = data['payload']?.toString() ?? '';
         final value = data['value'];
-        await _executeAction(
+        final success = await _executeAction(
           action,
           payload,
           value,
           socket: socket,
           generation: generation,
         );
+        if (!_isCurrentClient(socket, generation)) return;
+        if (success) {
+          _sendToSocket(socket, {
+            "type": "action_result",
+            "action": action,
+            "success": true,
+          });
+        } else {
+          _sendToSocket(socket, {
+            "type": "action_error",
+            "action": action,
+            "code": "action_failed",
+          });
+        }
       } else if (type == 'save_config') {
         final session = _sessionFor(socket);
         if (!_requireCapability(socket, session, AuthCapability.configAdmin)) {
@@ -1093,7 +1250,7 @@ class DartServerService {
 
   // --- Linux System Execution Engine ---
 
-  Future<void> _executeAction(
+  Future<bool> _executeAction(
     String action,
     String payload,
     dynamic value, {
@@ -1103,93 +1260,120 @@ class DartServerService {
     switch (action) {
       case 'launch_app':
       case 'open_url':
-        await SystemActionsService.executeLaunch(
+        return SystemActionsService.executeLaunch(
           payload,
           executor: _commandExecutor,
         );
-        break;
 
       case 'audio_volume':
-        if (value != null) {
-          final vol = (value as num).toInt().clamp(0, 100);
-          await SystemActionsService.setVolume(vol, executor: _commandExecutor);
-          if (!_isCurrentClient(socket, generation)) return;
-          currentVolume = vol;
-          _broadcast({
-            "type": "state_update",
-            "key": "volume",
-            "value": currentVolume,
-          });
-        }
-        break;
+        if (value is! num) return false;
+        final vol = value.toInt().clamp(0, 100);
+        final volumeSucceeded = await SystemActionsService.setVolume(
+          vol,
+          executor: _commandExecutor,
+        );
+        if (!volumeSucceeded) return false;
+        if (!_isCurrentClient(socket, generation)) return true;
+        currentVolume = vol;
+        _broadcast({
+          "type": "state_update",
+          "key": "volume",
+          "value": currentVolume,
+        });
+        return true;
 
       case 'audio_mute_toggle':
-        await SystemActionsService.toggleMute(executor: _commandExecutor);
-        if (!_isCurrentClient(socket, generation)) return;
+        final muteSucceeded = await SystemActionsService.toggleMute(
+          executor: _commandExecutor,
+        );
+        if (!muteSucceeded) return false;
+        if (!_isCurrentClient(socket, generation)) return true;
         isMuted = !isMuted;
         _broadcast({
           "type": "state_update",
           "key": "is_muted",
           "value": isMuted,
         });
-        break;
+        return true;
 
       case 'brightness':
-        if (value != null) {
-          final b = (value as num).toInt().clamp(5, 100);
-          await SystemActionsService.setBrightness(
-            b,
-            executor: _commandExecutor,
-          );
-          if (!_isCurrentClient(socket, generation)) return;
-          currentBrightness = b;
-          _broadcast({
-            "type": "state_update",
-            "key": "brightness",
-            "value": currentBrightness,
-          });
-        }
-        break;
+        if (value is! num) return false;
+        final b = value.toInt().clamp(5, 100);
+        final brightnessSucceeded = await SystemActionsService.setBrightness(
+          b,
+          executor: _commandExecutor,
+        );
+        if (!brightnessSucceeded) return false;
+        if (!_isCurrentClient(socket, generation)) return true;
+        currentBrightness = b;
+        _broadcast({
+          "type": "state_update",
+          "key": "brightness",
+          "value": currentBrightness,
+        });
+        return true;
 
       case 'mpris_action':
-        await SystemActionsService.executeMpris(
+        return SystemActionsService.executeMpris(
           payload,
           executor: _commandExecutor,
         );
-        break;
 
       case 'kde_action':
-        await SystemActionsService.executeKdeAction(
+        return SystemActionsService.executeKdeAction(
           payload,
           executor: _commandExecutor,
         );
-        break;
     }
+    return false;
   }
 
   // --- Differential Metrics & State Tracking Loop ---
 
   void _startMetricsLoop() {
     _metricsTimer?.cancel();
-    _metricsTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
-      if (!Platform.isLinux) return;
-
-      await _readLinuxMetrics();
-      if (_clients.isNotEmpty) {
-        await _checkDifferentialStateChanges();
-      }
+    final generation = _lifecycleGeneration;
+    _metricsTimer = Timer.periodic(_metricsInterval, (_) {
+      final tickGeneration = generation;
+      unawaited(_runMetricsTick(tickGeneration));
     });
   }
 
-  Future<void> _checkDifferentialStateChanges() async {
+  Future<void> _runMetricsTick(int generation) async {
+    if (!Platform.isLinux || !_isCurrentMetricsGeneration(generation)) return;
+
+    // A periodic timer does not await an async callback. Keep the token until
+    // the entire old-generation probe has finished so a restart cannot start
+    // a second external command while the first one is still blocked.
+    if (_metricsProbeToken != null) return;
+    final probeToken = Object();
+    _metricsProbeToken = probeToken;
+    try {
+      await _readLinuxMetrics(generation);
+      if (!_isCurrentMetricsGeneration(generation)) return;
+      if (_clients.isNotEmpty) {
+        await _checkDifferentialStateChanges(generation);
+      }
+    } catch (_) {
+      // Metrics are best-effort and must never affect lifecycle operations.
+    } finally {
+      // Never let an old probe clear a token belonging to a newer probe.
+      if (identical(_metricsProbeToken, probeToken)) {
+        _metricsProbeToken = null;
+      }
+    }
+  }
+
+  Future<void> _checkDifferentialStateChanges(int generation) async {
     try {
       bool changed = false;
 
       // 1. Differential Audio Volume Query
-      final pactlVol = await Process.run('pactl', [
+      final pactlVol = await _commandExecutor.run('pactl', [
         'get-sink-volume',
         '@DEFAULT_SINK@',
       ]);
+      if (!_isCurrentMetricsGeneration(generation)) return;
       if (pactlVol.exitCode == 0) {
         final match = RegExp(r'(\d+)%').firstMatch(pactlVol.stdout as String);
         if (match != null) {
@@ -1207,10 +1391,11 @@ class DartServerService {
       }
 
       // 2. Differential Audio Mute Query
-      final pactlMute = await Process.run('pactl', [
+      final pactlMute = await _commandExecutor.run('pactl', [
         'get-sink-mute',
         '@DEFAULT_SINK@',
       ]);
+      if (!_isCurrentMetricsGeneration(generation)) return;
       if (pactlMute.exitCode == 0) {
         final isMuteNow = (pactlMute.stdout as String).toLowerCase().contains(
           'yes',
@@ -1259,11 +1444,12 @@ class DartServerService {
     } catch (_) {}
   }
 
-  Future<void> _readLinuxMetrics() async {
+  Future<void> _readLinuxMetrics(int generation) async {
     try {
       final memFile = File('/proc/meminfo');
       if (memFile.existsSync()) {
         final content = await memFile.readAsString();
+        if (!_isCurrentMetricsGeneration(generation)) return;
         double totalKb = 0;
         double availableKb = 0;
         for (var line in content.split('\n')) {
@@ -1328,8 +1514,12 @@ class DartServerService {
     if (validated == null) return Future<Map<String, dynamic>?>.value(null);
 
     final operation = _saveOperation.then((_) async {
-      if (!await _writeConfigAtomically(validated, configData)) return null;
-      if (!_isCurrentGeneration(generation)) return null;
+      if (!_isCurrentSaveGeneration(generation)) return null;
+      final writer = _configWriter;
+      final wrote = writer == null
+          ? await _writeConfigAtomically(validated, configData)
+          : await writer(validated, configData);
+      if (!wrote || !_isCurrentSaveGeneration(generation)) return null;
       configData = validated;
       return validated;
     });
@@ -1337,6 +1527,9 @@ class DartServerService {
     _saveOperation = operation.then<void>((_) {}, onError: (_) {});
     return operation;
   }
+
+  bool _isCurrentSaveGeneration(int generation) =>
+      _isCurrentGeneration(generation) && isRunning;
 
   Future<Map<String, dynamic>?> _readValidatedConfig(File file) async {
     try {

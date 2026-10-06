@@ -340,10 +340,29 @@ Flutter clients replace their current config with the supplied map.
 ```
 
 Current keys are `volume`, `brightness`, and `is_muted`. The Flutter client
-also accepts `muted` as an alias. Action dispatch broadcasts optimistic state
-after clamping, while the four-second Linux poll broadcasts changes observed
-from `pactl` or backlight sysfs. There is no timestamp, source, revision, or
-operation ID.
+also accepts `muted` as an alias. Successful action dispatch broadcasts state
+after the command succeeds, while the four-second Linux poll broadcasts changes
+observed from `pactl` or backlight sysfs. There is no timestamp, source,
+revision, or operation ID.
+
+### `action_result`
+
+```json
+{ "type": "action_result", "action": "audio_volume", "success": true }
+```
+
+The authenticated action's command completed successfully. State-changing
+actions emit their `state_update` before this result.
+
+### `action_error`
+
+```json
+{ "type": "action_error", "action": "audio_volume", "code": "action_failed" }
+```
+
+The action was invalid, unsupported, threw an executor failure, or returned a
+nonzero exit status. The server intentionally does not disclose command lines,
+paths, payloads, or exception text. The failed action does not mutate state.
 
 ### `system_apps_list`
 
@@ -372,9 +391,9 @@ a safe public HTTP file server.
 
 The existing action names and config keys should remain stable for Linux
 clients. A future protocol should add, rather than silently reinterpret,
-capability discovery, request IDs, explicit action results/errors, config
-revision/conflict handling, and optional authentication. Windows/macOS action
-implementations should sit behind platform adapters while retaining the same
+capability discovery, request IDs, config revision/conflict handling, and
+optional authentication. Windows/macOS action implementations should sit behind
+platform adapters while retaining the same
 logical actions where semantics match. Linux D-Bus, PulseAudio/PipeWire,
 sysfs, `/proc`, desktop-entry, Flatpak, Snap, and icon behavior is the baseline
 to preserve.

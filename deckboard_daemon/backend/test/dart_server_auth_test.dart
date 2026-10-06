@@ -436,6 +436,11 @@ void main() {
     client.add(action);
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(executor.invocations, hasLength(1));
+    expect(await messages.next(), {
+      'type': 'action_result',
+      'action': 'launch_app',
+      'success': true,
+    });
 
     client.add(action);
     expect((await messages.next())['code'], 'rate_limited');
@@ -788,6 +793,138 @@ void main() {
   }, skip: !Platform.isLinux ? 'Linux command executor test' : false);
 
   test(
+    'failed state actions preserve state and send bounded action errors',
+    () async {
+      if (!Platform.isLinux) return;
+
+      final manager = AuthSessionManager(pairingCode: 'actions');
+      final session = manager.authenticate(
+        'actions',
+        role: AuthRole.configAdmin,
+      )!;
+      executor.exitCodes
+        ..['pactl'] = 1
+        ..['amixer'] = 1
+        ..['brightnessctl'] = 1
+        ..['xrandr'] = 1;
+      server = _newServer(manager, executor, tempDirectory);
+      server!
+        ..currentVolume = 41
+        ..currentBrightness = 63
+        ..isMuted = true;
+      final client = await _authenticatedSocket(server!, session.token);
+
+      client.socket.add(
+        jsonEncode({
+          'type': 'trigger_action',
+          'action': 'audio_volume',
+          'value': 90,
+        }),
+      );
+      expect(await client.messages.next(), {
+        'type': 'action_error',
+        'action': 'audio_volume',
+        'code': 'action_failed',
+      });
+      expect(server!.currentVolume, 41);
+
+      client.socket.add(
+        jsonEncode({'type': 'trigger_action', 'action': 'audio_mute_toggle'}),
+      );
+      expect(await client.messages.next(), {
+        'type': 'action_error',
+        'action': 'audio_mute_toggle',
+        'code': 'action_failed',
+      });
+      expect(server!.isMuted, isTrue);
+
+      client.socket.add(
+        jsonEncode({
+          'type': 'trigger_action',
+          'action': 'brightness',
+          'value': 90,
+        }),
+      );
+      expect(await client.messages.next(), {
+        'type': 'action_error',
+        'action': 'brightness',
+        'code': 'action_failed',
+      });
+      expect(server!.currentBrightness, 63);
+
+      await client.messages.close();
+      await client.socket.close();
+    },
+    skip: !Platform.isLinux ? 'Linux command executor test' : false,
+  );
+
+  test(
+    'successful state actions send state update before action result',
+    () async {
+      if (!Platform.isLinux) return;
+
+      final manager = AuthSessionManager(pairingCode: 'success');
+      final session = manager.authenticate(
+        'success',
+        role: AuthRole.configAdmin,
+      )!;
+      server = _newServer(manager, executor, tempDirectory);
+      final client = await _authenticatedSocket(server!, session.token);
+
+      client.socket.add(
+        jsonEncode({
+          'type': 'trigger_action',
+          'action': 'audio_volume',
+          'value': 88,
+        }),
+      );
+      expect(await client.messages.next(), {
+        'type': 'state_update',
+        'key': 'volume',
+        'value': 88,
+      });
+      expect(await client.messages.next(), {
+        'type': 'action_result',
+        'action': 'audio_volume',
+        'success': true,
+      });
+      expect(server!.currentVolume, 88);
+
+      await client.messages.close();
+      await client.socket.close();
+    },
+    skip: !Platform.isLinux ? 'Linux command executor test' : false,
+  );
+
+  test('unknown actions and invalid media/KDE payloads fail', () async {
+    if (!Platform.isLinux) return;
+
+    final manager = AuthSessionManager(pairingCode: 'invalid-actions');
+    final session = manager.authenticate(
+      'invalid-actions',
+      role: AuthRole.configAdmin,
+    )!;
+    server = _newServer(manager, executor, tempDirectory);
+    final client = await _authenticatedSocket(server!, session.token);
+
+    for (final action in [
+      {'action': 'unsupported_action'},
+      {'action': 'mpris_action', 'payload': 'unsupported_media'},
+      {'action': 'kde_action', 'payload': 'unsupported_kde'},
+    ]) {
+      client.socket.add(jsonEncode({'type': 'trigger_action', ...action}));
+      expect(await client.messages.next(), {
+        'type': 'action_error',
+        'action': action['action'],
+        'code': 'action_failed',
+      });
+    }
+
+    await client.messages.close();
+    await client.socket.close();
+  }, skip: !Platform.isLinux ? 'Linux command executor test' : false);
+
+  test(
     'rate limits failed authentication without bypassing auth or actions',
     () async {
       final clock = _FakeClock(DateTime.utc(2026, 1, 1));
@@ -1018,7 +1155,11 @@ void main() {
         'payload': '/usr/bin/example',
       }),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(await controlMessages.next(), {
+      'type': 'action_result',
+      'action': 'launch_app',
+      'success': true,
+    });
     expect(executor.invocations, hasLength(1));
 
     controlSocket.add(
@@ -1039,6 +1180,8 @@ void main() {
 
 final class _RecordingExecutor implements CommandExecutor {
   final List<String> invocations = [];
+  final Map<String, int> exitCodes = {};
+  final Set<String> throwingExecutables = {};
   Completer<void>? discoveryStarted;
   Completer<void>? discoveryRelease;
   Completer<void>? actionStarted;
@@ -1051,6 +1194,9 @@ final class _RecordingExecutor implements CommandExecutor {
     Map<String, String>? environment,
   }) async {
     invocations.add('$executable ${arguments.join(' ')}');
+    if (throwingExecutables.contains(executable)) {
+      throw StateError('injected command failure');
+    }
     if (executable == 'snap' && discoveryStarted != null) {
       if (!discoveryStarted!.isCompleted) discoveryStarted!.complete();
       await discoveryRelease!.future;
@@ -1062,7 +1208,7 @@ final class _RecordingExecutor implements CommandExecutor {
       if (!actionStarted!.isCompleted) actionStarted!.complete();
       await actionRelease!.future;
     }
-    return ProcessResult(0, 0, '', '');
+    return ProcessResult(0, exitCodes[executable] ?? 0, '', '');
   }
 }
 

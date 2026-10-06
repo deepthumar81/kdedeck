@@ -1363,7 +1363,8 @@ persistence prematurely.
 - Full backend `dart test -j 1 -r expanded`: **158 passed**.
 - `dart analyze`: no errors or warnings; **21 informational notices** remain.
 - Changed Dart files: format check passed; daemon executable compilation passed.
-- `git diff --check`: passed. No commit or push performed.
+- `git diff --check`: passed. No commit or push was performed at that point;
+  the Step 33 work was subsequently included in pushed commit `719a454`.
 
 ### Remaining work and next slice
 
@@ -1375,3 +1376,167 @@ stale in-memory assignment but not stale disk writes after restart. Production
 persistence remains off until storage-failure, durability, and platform-safety
 requirements are resolved. Parallel lock-probe stability and browser/device QA
 were not reverified in this step.
+
+## Step 34 — Fence metrics probes across lifecycle generations
+
+### Goal
+
+Prevent a periodic Linux metrics probe from mutating the state of a restarted
+server, and prevent timer ticks from launching overlapping external probes.
+
+### Changes
+
+- Added a validated test-only metrics interval while keeping the production
+  interval at four seconds.
+- Captured the lifecycle generation when the metrics loop starts and rejected
+  stale or stopped ticks before work begins and after each awaited operation.
+- Added an identity-based in-flight probe token. It remains owned by an old
+  generation until that probe actually finishes, so an old completion cannot
+  clear a newer probe's guard after restart.
+- Routed metrics `pactl` reads through the existing command-executor seam for
+  deterministic tests. Stop remains non-blocking; blocked external work is
+  fenced rather than falsely claimed to be cancelled.
+- Added a Linux regression that blocks `pactl`, verifies repeated timer ticks
+  never overlap, restarts the server, and verifies stale output cannot mutate
+  the new generation's volume, mute, or brightness state.
+
+### Verification
+
+- Lifecycle test file: **14 passed**.
+- Full backend `dart test -j 1 -r compact`: **159 passed**.
+- `dart analyze`: no errors; **21 informational notices** remain.
+- Changed Dart files passed format checks; `git diff --check` passed.
+- No commit or push performed for Step 34.
+
+### Remaining work and next slice
+
+HTTP requests can still be delayed in `_prepareHttpRequest` and then reach
+routing after stop/restart; the next bounded slice should generation-fence that
+preparation/routing boundary. Queued configuration saves still need an explicit
+drain/cancel policy so an old write cannot overwrite configuration loaded by a
+new generation. Production persistence remains disabled pending its listed
+storage and platform-safety prerequisites.
+
+## Step 35 — Fence delayed HTTP requests across lifecycle generations
+
+### Goal
+
+Prevent an HTTP request that is waiting in body preparation or filesystem
+routing from entering an old server generation after stop/restart.
+
+### Changes
+
+- Captured the listener generation before request preparation and rejected
+  stopped/stale requests before preparation, after envelope/body validation, and
+  before routing.
+- Added generation checks around frontend and icon filesystem awaits and bounded
+  file streaming so stale work closes without serving an old response.
+- Preserved the existing security headers, request limits, WebSocket upgrade
+  checks, and non-blocking shutdown behavior.
+- Added a deterministic held-body regression proving shutdown completes and a
+  restarted server still serves the current generation correctly.
+
+### Verification
+
+- Focused static/lifecycle tests: **27 passed**.
+- Full backend serial suite: **160 passed**.
+- `dart analyze`: no errors; existing informational notices remain.
+- Format and `git diff --check` passed. No commit or push performed for Step 35.
+
+### Newly tracked release requirement
+
+The repository did not yet define a complete upgrade contract. Current version
+metadata is inconsistent (`kdedeck_mobile/pubspec.yaml` is `1.0.0+1`, the
+backend package is `1.0.0`, and `ROADMAP.md` describes `v2.0.0`), and there is no
+implemented updater or migration policy. Added a required release task to
+`PENDING_WORK.md` for monotonic version/build metadata, stable package identity,
+preserved configuration and session data, migrations, protocol compatibility,
+signed artifacts, atomic replacement/rollback, and clean-install/upgrade tests.
+The intended user flow is an in-place update that keeps the older installation's
+data and does not require uninstalling it first.
+
+This is a planning task only; version values, packaging, and updater behavior
+were not changed in this step. Next implementation work should design the
+platform-specific update path and its recovery tests before launch packaging.
+
+## Step 36 — Drain and fence queued configuration saves
+
+### Goal
+
+Ensure configuration writes from an old server generation cannot race a restart,
+overwrite configuration loaded by the new generation, or continue reaching disk
+after a queued save has become stale.
+
+### Changes
+
+- Startup/test construction now has a private-backed config-writer seam; normal
+  production construction still uses the existing atomic file writer.
+- Each queued save checks its lifecycle generation and running state before disk
+  I/O, then checks again after the awaited write before changing `configData` or
+  reporting success. Stale queued saves therefore return without invoking the
+  writer.
+- Disposal invalidates the generation first and drains `_saveOperation` before
+  releasing the old server/store and allowing a queued restart to load config.
+  Failed writes remain error-safe and do not poison later lifecycle operations.
+- Added a deterministic blocked-write regression covering an in-flight save,
+  a queued stale save, shutdown waiting, restart, and preservation of the
+  existing configuration on disk.
+
+### Verification
+
+- Config tests: **9 passed**.
+- Lifecycle tests: **14 passed**.
+- Full backend serial suite: **161 passed**.
+- `dart analyze`: no errors; **21 informational notices** remain.
+- Format, compilation, and `git diff --check` passed. No commit or push
+  performed for Step 36.
+
+### Remaining work and next slice
+
+The lifecycle queue now covers HTTP, metrics, and configuration writes. Remaining
+release blockers include production persistence policy and platform safety,
+action timeouts/error reporting, embedded Flutter auth/WSS, and the new
+versioned in-place updater task. The next bounded backend slice should address
+the highest-priority persistence or action-execution gap without enabling
+production persistence prematurely.
+
+## Step 37 — Report action outcomes and reject failed state changes
+
+### Goal
+
+Make system-action failures observable to the authenticated client without
+leaking command details, and prevent optimistic volume, mute, or brightness
+state from claiming a command succeeded when it did not.
+
+### Changes
+
+- `SystemActionsService` launch, MPRIS, and KDE action methods now return a
+  boolean outcome. Invalid payloads, unsupported actions, nonzero exit codes,
+  and executor exceptions fail closed without exposing exception or command
+  details.
+- The standalone protocol now sends bounded `action_result` or `action_error`
+  messages only while the originating socket and lifecycle generation remain
+  current. Error responses contain only the action name and stable
+  `action_failed` code.
+- Volume, mute, and brightness state is updated/broadcast only after the
+  corresponding command succeeds. Unknown actions and invalid values fail
+  instead of silently succeeding.
+- Added deterministic executor-backed tests for failed state actions, successful
+  result ordering, invalid media/KDE actions, nonzero exits, and thrown command
+  failures.
+
+### Verification
+
+- Focused system-action/auth tests: **47 passed**.
+- Full backend serial suite: **170 passed**.
+- `dart analyze`: no errors; **21 informational notices** remain.
+- Format, compilation, and `git diff --check` passed. No commit or push
+  performed for Step 37.
+
+### Remaining work and next slice
+
+This slice does not cancel or kill an OS process whose future is slow or stuck;
+`Future.timeout` alone would not provide that guarantee. Subprocess timeout,
+termination, bounded output, and platform-specific recovery remain a separate
+release requirement. Production persistence, local role approval, sensitive
+action confirmation, and the versioned in-place updater task also remain open.

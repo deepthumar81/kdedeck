@@ -14,6 +14,9 @@ final class _Invocation {
 
 final class _RecordingExecutor implements CommandExecutor {
   final List<_Invocation> invocations = [];
+  int exitCode = 0;
+  Object? error;
+  String stdout = '';
 
   @override
   Future<ProcessResult> run(
@@ -24,7 +27,9 @@ final class _RecordingExecutor implements CommandExecutor {
     invocations.add(
       _Invocation(executable, List<String>.from(arguments), environment),
     );
-    return ProcessResult(0, 0, '', '');
+    final error = this.error;
+    if (error != null) throw error;
+    return ProcessResult(0, exitCode, stdout, '');
   }
 }
 
@@ -60,6 +65,30 @@ void main() {
         'HTTPS://example.test/uppercase-scheme',
       ]);
       expect(executor.invocations[0].environment, {'DISPLAY': ':0'});
+    });
+
+    test('reports invalid, nonzero, and thrown launch outcomes', () async {
+      expect(
+        await SystemActionsService.executeLaunch('', executor: executor),
+        isFalse,
+      );
+      executor.exitCode = 1;
+      expect(
+        await SystemActionsService.executeLaunch(
+          'https://example.test/failure',
+          executor: executor,
+        ),
+        isFalse,
+      );
+      executor.exitCode = 0;
+      executor.error = StateError('injected failure');
+      expect(
+        await SystemActionsService.executeLaunch(
+          'https://example.test/exception',
+          executor: executor,
+        ),
+        isFalse,
+      );
     });
 
     test('keeps shell metacharacters in a URL as data', () async {
@@ -171,6 +200,75 @@ void main() {
     );
   });
 
+  group('SystemActionsService media outcomes', () {
+    test('reports failed multi-command media operations', () async {
+      if (!Platform.isLinux) return;
+
+      final executor = _RecordingExecutor()..exitCode = 1;
+      expect(
+        await SystemActionsService.executeMpris(
+          'volume_up',
+          executor: executor,
+        ),
+        isFalse,
+      );
+      expect(executor.invocations, hasLength(2));
+    });
+
+    test('reports thrown media command outcomes', () async {
+      if (!Platform.isLinux) return;
+
+      final executor = _RecordingExecutor()
+        ..error = StateError('injected media failure');
+      expect(
+        await SystemActionsService.executeMpris(
+          'volume_down',
+          executor: executor,
+        ),
+        isFalse,
+      );
+    });
+
+    test('reports failed media discovery and player commands', () async {
+      if (!Platform.isLinux) return;
+
+      final discoveryFailure = _RecordingExecutor()..exitCode = 1;
+      expect(
+        await SystemActionsService.executeMpris(
+          'play',
+          executor: discoveryFailure,
+        ),
+        isFalse,
+      );
+
+      final playerFailure = _RecordingExecutor()
+        ..stdout = '"org.mpris.MediaPlayer2.example"'
+        ..exitCode = 1;
+      expect(
+        await SystemActionsService.executeMpris(
+          'play',
+          executor: playerFailure,
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'rejects unsupported media payloads before command execution',
+      () async {
+        final executor = _RecordingExecutor();
+        expect(
+          await SystemActionsService.executeMpris(
+            'unsupported_media',
+            executor: executor,
+          ),
+          isFalse,
+        );
+        expect(executor.invocations, isEmpty);
+      },
+    );
+  });
+
   group('SystemActionsService KDE actions', () {
     test('uses only the fixed KDE action allowlist', () async {
       if (!Platform.isLinux) return;
@@ -192,9 +290,12 @@ void main() {
 
       for (final entry in expected.entries) {
         final executor = _RecordingExecutor();
-        await SystemActionsService.executeKdeAction(
-          entry.key,
-          executor: executor,
+        expect(
+          await SystemActionsService.executeKdeAction(
+            entry.key,
+            executor: executor,
+          ),
+          isTrue,
         );
 
         expect(executor.invocations, hasLength(1), reason: entry.key);
@@ -214,6 +315,21 @@ void main() {
         executor: rejected,
       );
       expect(rejected.invocations, isEmpty);
+    });
+
+    test('reports failed and thrown KDE outcomes', () async {
+      if (!Platform.isLinux) return;
+
+      final failed = _RecordingExecutor()..exitCode = 1;
+      expect(
+        await SystemActionsService.executeKdeAction('lock', executor: failed),
+        isFalse,
+      );
+      final thrown = _RecordingExecutor()..error = StateError('injected');
+      expect(
+        await SystemActionsService.executeKdeAction('lock', executor: thrown),
+        isFalse,
+      );
     });
   });
 }

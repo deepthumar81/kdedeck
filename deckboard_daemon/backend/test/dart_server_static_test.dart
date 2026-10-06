@@ -238,6 +238,45 @@ void main() {
     expect(response.body, 'Bad Request');
     expect(response.body, isNot(contains('fragment')));
   });
+
+  test(
+    'stops promptly and fences a request held during body preparation',
+    () async {
+      server = _newServer(fixtureRoot, outsideRoot);
+      await server!.startServer();
+
+      final socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        server!.port,
+      );
+      try {
+        socket.add(
+          utf8.encode(
+            'POST /index.html HTTP/1.1\r\n'
+            'Host: 127.0.0.1\r\n'
+            'Content-Length: 4\r\n'
+            '\r\n'
+            'he',
+          ),
+        );
+        await socket.flush();
+        // Let the listener enter its awaited body read without relying on a
+        // wall-clock delay. The remaining bytes intentionally never arrive.
+        await Future<void>.delayed(Duration.zero);
+
+        await server!.stopServer().timeout(const Duration(seconds: 3));
+        expect(server!.isRunning, isFalse);
+
+        await server!.startServer();
+        final currentRequest = await _get(server!, '/');
+        expect(currentRequest.statusCode, HttpStatus.ok);
+        expect(currentRequest.body, '<html>fixture</html>');
+        _expectSecurityHeaders(currentRequest);
+      } finally {
+        socket.destroy();
+      }
+    },
+  );
 }
 
 final class _RawResponse {
