@@ -537,6 +537,13 @@ void main() {
 
       final init = await messages.next();
       expect(init['type'], 'init_state');
+      expect(init['protocol_version'], isA<int>());
+      expect(init['protocol_version'], 1);
+      expect(init['capabilities'], [
+        'trigger_action',
+        'save_config',
+        'get_system_apps',
+      ]);
       expect(init['config'], isA<Map>());
       expect(init['state'], isA<Map>());
 
@@ -588,6 +595,62 @@ void main() {
       await second.close();
     },
   );
+
+  for (final (role, expectedCapabilities) in [
+    (AuthRole.viewer, ['view']),
+    (AuthRole.control, ['view', 'control']),
+    (AuthRole.configAdmin, ['view', 'control', 'configAdmin']),
+  ]) {
+    test(
+      'token reconnect advertises only $role session capabilities',
+      () async {
+        final manager = AuthSessionManager(pairingCode: 'role-code');
+        final session = manager.authenticate('role-code', role: role)!;
+        server = _newServer(manager, executor, tempDirectory);
+        for (var connection = 0; connection < 2; connection++) {
+          final socket = await _connect(server!);
+          final messages = _MessageReader(socket);
+          expect(await messages.next(), {'type': 'auth_required'});
+          if (connection == 0) {
+            socket.add(
+              jsonEncode({'type': 'authenticate', 'token': 'invalid'}),
+            );
+            expect(await messages.next(), {
+              'type': 'auth_error',
+              'code': 'invalid_credentials',
+            });
+          }
+
+          socket.add(
+            jsonEncode({'type': 'authenticate', 'token': session.token}),
+          );
+          final success = await messages.next();
+          expect(success['type'], 'auth_success');
+          expect(success['role'], role.name);
+          final init = await messages.next();
+          expect(init['type'], 'init_state');
+          expect(init['protocol_version'], 1);
+          expect(init['capabilities'], [
+            'trigger_action',
+            'save_config',
+            'get_system_apps',
+          ]);
+          expect(init['session_capabilities'], expectedCapabilities);
+          expect(
+            jsonEncode(init['session_capabilities']),
+            isNot(contains(session.token)),
+          );
+          expect(
+            jsonEncode(init['session_capabilities']),
+            isNot(contains('/')),
+          );
+
+          await messages.close();
+          await socket.close();
+        }
+      },
+    );
+  }
 
   test(
     'reports session capacity, retains pairing, and pairs after revocation',

@@ -1,10 +1,12 @@
 # KDE Deck protocol (current state)
 
 This is the protocol actually implemented by the standalone Dart server on
-`main`. It is JSON-over-WebSocket with no version or negotiated subprotocol.
-The standalone server requires authentication before sending state or handling
-control/configuration requests. The Flutter embedded server remains a separate
-implementation and is not changed by this step.
+`main`. It is JSON-over-WebSocket with no negotiated subprotocol. After
+authentication, `init_state` includes additive protocol metadata advertising a
+stable version and bounded capability list. The standalone server requires
+authentication before sending state or handling control/configuration requests.
+The Flutter embedded server remains a separate implementation and is not
+changed by this step.
 
 ## Transport and endpoints
 
@@ -176,8 +178,11 @@ do not invoke command execution, configuration persistence, or app discovery.
 ```json
 {
   "type": "init_state",
+  "protocol_version": 1,
+  "capabilities": ["trigger_action", "save_config", "get_system_apps"],
+  "session_capabilities": ["view", "control", "configAdmin"],
   "config": { "boards": [] },
-    "pin_required": true,
+  "pin_required": true,
   "state": {
     "volume": 50,
     "brightness": 70,
@@ -194,6 +199,14 @@ do not invoke command execution, configuration persistence, or app discovery.
   }
 }
 ```
+
+`protocol_version` is a stable integer for the standalone wire protocol.
+`capabilities` is a bounded list of supported protocol operation names. These
+fields are advertisement only: clients may observe them, but this slice adds no
+version negotiation, capability negotiation, or compatibility enforcement.
+`session_capabilities` is the bounded list of authorization capabilities granted
+to the authenticated session; it is derived from the server's existing role
+permissions and does not grant permissions by itself.
 
 `pin_required` is retained as a legacy compatibility flag and is now `true` for
 authenticated standalone-server sessions. The actual protocol authentication is

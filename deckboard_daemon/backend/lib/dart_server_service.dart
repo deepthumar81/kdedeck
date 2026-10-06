@@ -9,6 +9,7 @@ import 'auth_rate_limiter.dart';
 import 'auth_session_manager.dart';
 import 'command_executor.dart';
 import 'config_validator.dart';
+import 'protocol_metadata.dart';
 import 'server_tls.dart';
 import 'session_store.dart';
 import 'system_actions_service.dart';
@@ -1231,12 +1232,19 @@ class DartServerService {
   }
 
   void _sendInitState(WebSocket socket) {
+    final session = _sessionFor(socket);
+    if (session == null) return;
     if (configData == null) {
       configData = _getDefaultConfig();
     }
 
     _sendToSocket(socket, {
       "type": "init_state",
+      ...StandaloneProtocolMetadata.advertisement,
+      "session_capabilities": AuthCapability.values
+          .where(session.hasCapability)
+          .map((capability) => capability.name)
+          .toList(growable: false),
       "config": configData,
       "pin_required": true,
       "state": {

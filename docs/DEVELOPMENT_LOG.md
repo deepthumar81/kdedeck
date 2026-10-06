@@ -1626,3 +1626,74 @@ workflow. The policy must be wired to a trusted local UI/desktop prompt before
 production sensitive actions are enabled. Local role selection, production
 persistence safety, approved application identities, client authentication UX,
 and versioned in-place upgrades remain open.
+
+## Step 40 — Advertise standalone protocol metadata
+
+### Goal
+
+Add a small additive compatibility advertisement to authenticated standalone
+`init_state` responses without changing authentication, message ordering, action
+behavior, or the embedded Flutter server.
+
+### Changes
+
+- Added immutable `StandaloneProtocolMetadata` with protocol version `1` and the
+  bounded capability list `trigger_action`, `save_config`, and `get_system_apps`.
+- Added `protocol_version` and `capabilities` to authenticated standalone
+  `init_state` messages. The fields contain no credentials, paths, or host
+  details.
+- Added focused authenticated protocol assertions and documented that the fields
+  are advertisement only; no negotiation or compatibility enforcement is added.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/protocol_metadata.dart`
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_auth_test.dart`
+- `docs/protocol.md`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `dart test test/dart_server_auth_test.dart -r compact`: **PASS**, 33 tests.
+- `dart format lib/protocol_metadata.dart lib/dart_server_service.dart
+  test/dart_server_auth_test.dart`: **PASS**, no files changed.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This is advertisement only. Version negotiation, compatibility enforcement,
+embedded Flutter convergence, and client consumption remain future work.
+
+## Step 41 — Advertise authenticated session capabilities
+
+### Goal
+
+Expose the validated session's existing authorization capabilities so clients
+can hide unsupported controls without changing server-side authorization.
+
+### Changes
+
+- Added `session_capabilities` to authenticated standalone `init_state`
+  messages, derived directly from the existing `AuthRole` permission model.
+- Added reconnect coverage for viewer, control, and config-admin sessions.
+- Documented that the field is informational and does not grant permissions.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_auth_test.dart`
+- `docs/protocol.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `dart test test/dart_server_auth_test.dart -r compact`: **PASS**, 36 tests.
+- `dart format ...`: **PASS**, no files changed.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+Client UI consumption, version negotiation, compatibility enforcement, and
+embedded Flutter convergence remain future work. No commit or push performed.

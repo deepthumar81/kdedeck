@@ -73,7 +73,7 @@ security or UI/platform parity.
 - [ ] TLS certificate provisioning, verified fingerprint/trust workflow, expiry
   and hostname rejection fixtures, rotation UX and physical LAN verification.
 - [ ] Converge embedded Flutter server with shared auth/validation/TLS policy;
-  versioned protocol/capabilities and server lifecycle/tray path reliability.
+  protocol compatibility enforcement and server lifecycle/tray path reliability.
 
 ## Clients, UX, platforms, releases
 
@@ -97,5 +97,7 @@ security or UI/platform parity.
 Completed slices so far: documentation baseline, test/executor seams, standalone
 auth gates, per-peer failed-attempt throttling, config validation/backup, bounded
 session manager, capacity response, safe bind defaults, TLS listener, and explicit
-foreground terminal pairing, and an opt-in persisted session-store boundary.
+foreground terminal pairing, an opt-in persisted session-store boundary, and
+standalone protocol metadata advertisement. Embedded-server convergence and
+compatibility enforcement remain pending.
 Automated checks do not replace device/browser QA.
