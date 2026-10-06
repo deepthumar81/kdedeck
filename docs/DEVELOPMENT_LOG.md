@@ -1583,3 +1583,46 @@ termination semantics need platform verification. User-launched application
 ownership/lifetime and fabricated metrics remain open. Production persistence
 policy, local role approval, sensitive action confirmation, Flutter auth/WSS,
 and the versioned in-place updater remain release work.
+
+## Step 39 — Gate sensitive power and session actions
+
+### Goal
+
+Prevent authenticated remote control clients from invoking KDE power/session
+actions unless a local daemon policy explicitly enables them and destructive
+actions receive a local confirmation.
+
+### Changes
+
+- Added the default-deny `SensitiveActionPolicy` seam to the standalone server.
+  Production setup can configure it before accepting remote clients; tests can
+  inject an isolated policy without credentials or request data.
+- `sleep`, `shutdown`, `logout`, and `lock` now fail closed unless the explicit
+  sensitive-action policy is enabled. Existing authenticated control capability
+  checks remain required.
+- `sleep`, `shutdown`, and `logout` additionally require an action-scoped async
+  local confirmation callback. Missing, false, throwing, or stale-generation
+  confirmations deny the command. `lock` can be enabled without confirmation,
+  but remains denied by default.
+- Denials use the existing bounded requester-only `action_error` response and
+  never reach the command executor. Confirmation and command continuations keep
+  the existing socket/lifecycle fencing.
+- Added deterministic tests for default denial, positive/negative confirmation,
+  lock policy behavior, requester-only errors, ordinary-action isolation, and
+  stop-time confirmation fencing.
+
+### Verification
+
+- Focused sensitive-action, command-limit, and auth tests: **43 passed**.
+- Full backend serial suite: **187 passed**.
+- `dart analyze`: no errors; **22 informational notices** remain.
+- Format, daemon compilation, and `git diff --check` passed. No commit or push
+  performed for Step 39.
+
+### Remaining work and next slice
+
+This adds a backend policy seam, not a desktop confirmation UI or role-approval
+workflow. The policy must be wired to a trusted local UI/desktop prompt before
+production sensitive actions are enabled. Local role selection, production
+persistence safety, approved application identities, client authentication UX,
+and versioned in-place upgrades remain open.

@@ -14,6 +14,29 @@ import 'session_store.dart';
 import 'system_actions_service.dart';
 import 'websocket_rate_limiter.dart';
 
+/// Server-level gate for remote KDE power and session actions.
+///
+/// The default policy denies every sensitive action. Enabling the policy is
+/// sufficient for [lock], while destructive actions remain unavailable unless
+/// a local confirmation callback is also supplied.
+final class SensitiveActionPolicy {
+  const SensitiveActionPolicy({
+    this.allowSensitiveActions = false,
+    this.sensitiveActionConfirmation,
+  });
+
+  final bool allowSensitiveActions;
+  final Future<bool> Function(String action)? sensitiveActionConfirmation;
+
+  bool allows(String action) {
+    if (!allowSensitiveActions) return false;
+    return action == 'lock' || sensitiveActionConfirmation != null;
+  }
+
+  bool requiresConfirmation(String action) =>
+      action == 'sleep' || action == 'shutdown' || action == 'logout';
+}
+
 class DartServerService {
   static const int defaultMaxConnections = 100;
   static const int defaultMaxFrameBytes = 64 * 1024;
@@ -74,6 +97,7 @@ class DartServerService {
       _environment = Platform.environment,
       _commandExecutor = ProcessCommandExecutor.bounded(),
       _launchCommandExecutor = const ProcessCommandExecutor(),
+      _sensitiveActionPolicy = const SensitiveActionPolicy(),
       _maxConnections = defaultMaxConnections,
       _maxFrameBytes = defaultMaxFrameBytes,
       _maxOversizedFrameViolations = defaultMaxOversizedFrameViolations,
@@ -103,6 +127,7 @@ class DartServerService {
     ConfigLimits? configLimits,
     CommandExecutor? commandExecutor,
     CommandExecutor? launchCommandExecutor,
+    SensitiveActionPolicy sensitiveActionPolicy = const SensitiveActionPolicy(),
     Map<String, String> environment = const {},
     int maxConnections = defaultMaxConnections,
     int maxFrameBytes = defaultMaxFrameBytes,
@@ -140,6 +165,7 @@ class DartServerService {
        _launchCommandExecutor =
            launchCommandExecutor ??
            (commandExecutor ?? const ProcessCommandExecutor()),
+       _sensitiveActionPolicy = sensitiveActionPolicy,
        _maxConnections = _validateMaxConnections(maxConnections),
        _maxFrameBytes = _validatePositiveLimit(maxFrameBytes, 'maxFrameBytes'),
        _maxOversizedFrameViolations = _validatePositiveLimit(
@@ -197,6 +223,7 @@ class DartServerService {
   final Map<String, String> _environment;
   final CommandExecutor _commandExecutor;
   final CommandExecutor _launchCommandExecutor;
+  SensitiveActionPolicy _sensitiveActionPolicy;
   final int _maxConnections;
   final int _maxFrameBytes;
   final int _maxOversizedFrameViolations;
@@ -233,6 +260,16 @@ class DartServerService {
   int get maxRequestHeaderCount => _maxRequestHeaderCount;
 
   int get maxRequestBodyBytes => _maxRequestBodyBytes;
+
+  SensitiveActionPolicy get sensitiveActionPolicy => _sensitiveActionPolicy;
+
+  /// Configures the production singleton's remote sensitive-action policy.
+  ///
+  /// Call this during local daemon setup, before accepting remote clients. No
+  /// credentials or request payloads are part of this configuration seam.
+  void configureSensitiveActionPolicy(SensitiveActionPolicy policy) {
+    _sensitiveActionPolicy = policy;
+  }
 
   /// Issues a new one-time code for a local, already-running daemon.
   ///
@@ -1326,6 +1363,31 @@ class DartServerService {
         );
 
       case 'kde_action':
+        const sensitiveActions = {'sleep', 'shutdown', 'logout', 'lock'};
+        if (!sensitiveActions.contains(payload) ||
+            !_sensitiveActionPolicy.allows(payload)) {
+          return false;
+        }
+
+        if (_sensitiveActionPolicy.requiresConfirmation(payload)) {
+          final confirmation =
+              _sensitiveActionPolicy.sensitiveActionConfirmation;
+          if (confirmation == null || !_isCurrentClient(socket, generation)) {
+            return false;
+          }
+          bool confirmed;
+          try {
+            confirmed = await confirmation(payload);
+          } catch (_) {
+            confirmed = false;
+          }
+          if (!confirmed ||
+              !_isCurrentClient(socket, generation) ||
+              !_sensitiveActionPolicy.allows(payload)) {
+            return false;
+          }
+        }
+        if (!_isCurrentClient(socket, generation)) return false;
         return SystemActionsService.executeKdeAction(
           payload,
           executor: _commandExecutor,

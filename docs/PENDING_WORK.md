@@ -55,7 +55,8 @@ security or UI/platform parity.
   backend suite passes, but one parallel probe timed out during Step 31.
 - [ ] Local approval and role selection instead of always pairing as configAdmin;
   background/tray local pairing without logging codes.
-- [ ] Sensitive power/session action authorization and confirmation.
+- [x] Gate sensitive power/session actions behind an explicit policy and local
+  confirmation for sleep, shutdown, and logout (Step 39).
 - [ ] Restrict application execution to approved identities; no arbitrary
   executable or interpreter invocation even when argv has no shell syntax.
 - [x] Return bounded action results/errors and preserve state after command

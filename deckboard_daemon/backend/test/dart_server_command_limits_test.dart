@@ -30,6 +30,9 @@ void main() {
     server = _newServer(
       commandExecutor: control,
       launchCommandExecutor: launch,
+      sensitiveActionPolicy: const SensitiveActionPolicy(
+        allowSensitiveActions: true,
+      ),
     );
     final session = await _authenticatedSocket(server!);
 
@@ -138,11 +141,13 @@ Future<void> main() async {
 DartServerService _newServer({
   required CommandExecutor commandExecutor,
   CommandExecutor? launchCommandExecutor,
+  SensitiveActionPolicy sensitiveActionPolicy = const SensitiveActionPolicy(),
 }) => DartServerService.forTesting(
   port: 0,
   authSessionManager: AuthSessionManager(pairingCode: 'pairing-code'),
   commandExecutor: commandExecutor,
   launchCommandExecutor: launchCommandExecutor,
+  sensitiveActionPolicy: sensitiveActionPolicy,
   configPath: '${Directory.systemTemp.path}/unused-deckboard-config.json',
   metricsInterval: const Duration(hours: 1),
 );
