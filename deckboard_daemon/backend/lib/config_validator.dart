@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'app_discovery.dart';
 
+const int currentConfigSchemaVersion = 1;
+
 /// Limits applied to a standalone daemon configuration.
 ///
 /// The validator is deliberately independent of persistence and networking so
@@ -80,12 +82,23 @@ class ConfigValidator {
 
   Map<String, dynamic> _validateConfig(Object? value) {
     final input = _map(value, 'config');
-    final output = <String, dynamic>{};
+    final schemaVersion = input['config_schema_version'];
+    if (input.containsKey('config_schema_version') &&
+        (schemaVersion is! int ||
+            schemaVersion != currentConfigSchemaVersion)) {
+      throw const _ConfigValidationException('unsupported_config_version');
+    }
+
+    final output = <String, dynamic>{
+      'config_schema_version': currentConfigSchemaVersion,
+    };
     var hasBoards = false;
 
     for (final entry in input.entries) {
       final key = _key(entry.key, 'config');
-      if (key == 'boards') {
+      if (key == 'config_schema_version') {
+        continue;
+      } else if (key == 'boards') {
         hasBoards = true;
         output[key] = _validateBoards(entry.value);
       } else {

@@ -1655,6 +1655,7 @@ class DartServerService {
 
   Map<String, dynamic> _getDefaultConfig() {
     return {
+      "config_schema_version": currentConfigSchemaVersion,
       "boards": [
         {
           "id": "board_default",

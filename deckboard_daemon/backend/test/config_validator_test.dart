@@ -5,6 +5,35 @@ import 'package:backend/config_validator.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('normalizes legacy configs without a schema version', () {
+    final result = const ConfigValidator().validate(_config());
+
+    expect(result.isValid, isTrue, reason: result.errorCode);
+    expect(result.config!['config_schema_version'], currentConfigSchemaVersion);
+  });
+
+  test('accepts the current explicit schema version', () {
+    final result = const ConfigValidator().validate({
+      ..._config(),
+      'config_schema_version': currentConfigSchemaVersion,
+    });
+
+    expect(result.isValid, isTrue, reason: result.errorCode);
+    expect(result.config!['config_schema_version'], currentConfigSchemaVersion);
+  });
+
+  test('rejects unsupported schema versions with a bounded error', () {
+    for (final version in [0, 2, '1', null]) {
+      final result = const ConfigValidator().validate({
+        ..._config(),
+        'config_schema_version': version,
+      });
+
+      expect(result.isValid, isFalse);
+      expect(result.errorCode, 'unsupported_config_version');
+    }
+  });
+
   test(
     'accepts the checked-in config without dropping client fields',
     () async {

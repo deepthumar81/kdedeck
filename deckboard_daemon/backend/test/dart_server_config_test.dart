@@ -30,6 +30,7 @@ void main() {
     expect(server!.port, greaterThan(0));
     expect(server!.isRunning, isTrue);
     expect(server!.isSecure, isFalse);
+    expect(server!.configData?['config_schema_version'], 1);
   });
 
   test('allow_lan true selects the LAN bind address', () async {
