@@ -72,7 +72,8 @@ class DartServerService {
       _clientIdentityResolver = _defaultClientIdentity,
       _configValidator = const ConfigValidator(),
       _environment = Platform.environment,
-      _commandExecutor = const ProcessCommandExecutor(),
+      _commandExecutor = ProcessCommandExecutor.bounded(),
+      _launchCommandExecutor = const ProcessCommandExecutor(),
       _maxConnections = defaultMaxConnections,
       _maxFrameBytes = defaultMaxFrameBytes,
       _maxOversizedFrameViolations = defaultMaxOversizedFrameViolations,
@@ -101,6 +102,7 @@ class DartServerService {
     String Function(HttpRequest request)? clientIdentityResolver,
     ConfigLimits? configLimits,
     CommandExecutor? commandExecutor,
+    CommandExecutor? launchCommandExecutor,
     Map<String, String> environment = const {},
     int maxConnections = defaultMaxConnections,
     int maxFrameBytes = defaultMaxFrameBytes,
@@ -134,7 +136,10 @@ class DartServerService {
          limits: configLimits ?? const ConfigLimits(),
        ),
        _environment = Map<String, String>.of(environment),
-       _commandExecutor = commandExecutor ?? const ProcessCommandExecutor(),
+       _commandExecutor = commandExecutor ?? ProcessCommandExecutor.bounded(),
+       _launchCommandExecutor =
+           launchCommandExecutor ??
+           (commandExecutor ?? const ProcessCommandExecutor()),
        _maxConnections = _validateMaxConnections(maxConnections),
        _maxFrameBytes = _validatePositiveLimit(maxFrameBytes, 'maxFrameBytes'),
        _maxOversizedFrameViolations = _validatePositiveLimit(
@@ -191,6 +196,7 @@ class DartServerService {
   final ConfigValidator _configValidator;
   final Map<String, String> _environment;
   final CommandExecutor _commandExecutor;
+  final CommandExecutor _launchCommandExecutor;
   final int _maxConnections;
   final int _maxFrameBytes;
   final int _maxOversizedFrameViolations;
@@ -1262,7 +1268,7 @@ class DartServerService {
       case 'open_url':
         return SystemActionsService.executeLaunch(
           payload,
-          executor: _commandExecutor,
+          executor: _launchCommandExecutor,
         );
 
       case 'audio_volume':

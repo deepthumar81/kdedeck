@@ -60,8 +60,11 @@ security or UI/platform parity.
   executable or interpreter invocation even when argv has no shell syntax.
 - [x] Return bounded action results/errors and preserve state after command
   failures (Step 37).
-- [ ] Add subprocess timeouts, cancellation/kill semantics, and bounded action
-  execution; remove fabricated metrics.
+- [x] Bound control, discovery, and metrics subprocesses with deadlines,
+  direct-child termination, sanitized failures, and combined output limits
+  (Step 38).
+- [ ] Define safe ownership/lifetime for user-launched applications and process
+  trees across platforms; remove fabricated metrics.
 - [ ] Config revision/conflict detection, restrictive file permissions, injected
   persistence failure tests, cross-platform atomic replacement verification.
 - [ ] Icon authorization, file/content limits and safe SVG behavior; valid Snap,

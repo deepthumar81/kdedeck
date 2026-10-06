@@ -1540,3 +1540,46 @@ This slice does not cancel or kill an OS process whose future is slow or stuck;
 termination, bounded output, and platform-specific recovery remain a separate
 release requirement. Production persistence, local role approval, sensitive
 action confirmation, and the versioned in-place updater task also remain open.
+
+## Step 38 — Bound control subprocesses and sanitize execution failures
+
+### Goal
+
+Prevent control, discovery, and metrics commands from hanging the daemon or
+accumulating unbounded output, while preserving the behavior of user-launched
+applications whose lifetime belongs to the user.
+
+### Changes
+
+- Added `ProcessCommandExecutor.bounded()` with validated timeout, termination
+  grace, and combined stdout/stderr byte-limit options. It starts processes
+  without a shell, drains both pipes concurrently, closes stdin, and returns
+  normal `ProcessResult` values including nonzero exits.
+- Bounded failures use sanitized reason codes for start, timeout, output-limit,
+  and I/O failures. Timeout/output failures terminate the direct child with
+  POSIX TERM-then-KILL escalation and bounded cleanup. This does not claim
+  process-tree termination, especially for descendants or Windows.
+- Standalone control, app discovery, and metrics operations now use the bounded
+  executor by default. `launch_app` and `open_url` retain the legacy executor so
+  a timeout policy cannot kill an application the user intentionally opened;
+  injected test executors remain compatible.
+- Added real subprocess probes for argv/environment, nonzero exits, timeout and
+  TERM-ignoring children, output floods, sanitized startup errors, descendant
+  pipe handling, and executor reuse. Added server integration tests for bounded
+  action errors and separate launch/control executors.
+
+### Verification
+
+- Focused executor/integration/auth/action tests: **57 passed**.
+- Full backend serial suite: **180 passed**.
+- `dart analyze`: no errors; **21 informational notices** remain.
+- Format, daemon compilation, and `git diff --check` passed. No commit or push
+  performed for Step 38.
+
+### Remaining work and next slice
+
+The direct-child boundary is deliberate: descendants may survive, and Windows
+termination semantics need platform verification. User-launched application
+ownership/lifetime and fabricated metrics remain open. Production persistence
+policy, local role approval, sensitive action confirmation, Flutter auth/WSS,
+and the versioned in-place updater remain release work.
