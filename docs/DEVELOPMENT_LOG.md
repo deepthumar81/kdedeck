@@ -1904,3 +1904,39 @@ This records public-server coverage for the opt-in test persistence boundary.
 Production persistence is not solved: storage-failure policy, directory
 durability, cross-platform replacement/ACL behavior, multi-isolate ownership,
 and production startup wiring remain pending.
+
+## Step 47 — Make web configuration saves revision-aware
+
+### Goal
+
+Have the existing web configurator participate in the standalone protocol's
+optional compatibility and config-conflict boundaries without breaking older
+servers or silently overwriting another client's changes.
+
+### Changes
+
+- Web authentication now advertises standalone protocol version `1`.
+- The configurator tracks the revision from `init_state` and
+  `config_updated`, sending it with subsequent `save_config` requests when
+  available.
+- A `config_conflict` response preserves the local draft, blocks further saves,
+  and tells the user to reload instead of retrying a stale write.
+- Legacy servers that omit revisions remain usable; the client simply omits the
+  optional field.
+
+### Changed files
+
+- `deckboard_daemon/frontend/app.js`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `node --check app.js`: **PASS**.
+- Focused backend regression coverage remains provided by Step 46.
+
+### Scope boundary
+
+This covers web revision participation only. WebSocket credential storage,
+complete browser end-to-end tests, Flutter auth/WSS, and server-side production
+persistence remain pending.

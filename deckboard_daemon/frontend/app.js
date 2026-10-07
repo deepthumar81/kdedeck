@@ -1,4 +1,5 @@
 const AUTH_TOKEN_STORAGE_KEY = 'kdedeck.authToken';
+const CLIENT_PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 2000;
 let ws = null;
 let reconnectTimer = null;
@@ -10,6 +11,8 @@ let draggedItemIndex = null;
 let autoSave = true;
 let isDirty = false;
 let systemApps = [];
+let configRevision = null;
+let configSaveBlocked = false;
 
 // DOM Elements
 const statusEl = document.getElementById('connection-status');
@@ -154,7 +157,11 @@ function handleWebSocketMessage(event) {
             const token = storedAuthToken();
             if (token) {
                 setConnectionStatus('Authenticating...', 'status-offline');
-                ws.send(JSON.stringify({ type: 'authenticate', token }));
+                ws.send(JSON.stringify({
+                    type: 'authenticate',
+                    token,
+                    protocol_version: CLIENT_PROTOCOL_VERSION,
+                }));
             } else {
                 setConnectionStatus('Pairing required', 'status-offline');
                 showAuthModal();
@@ -191,8 +198,25 @@ function handleWebSocketMessage(event) {
 
         if (!isAuthenticated) return;
 
+        if (msg.type === 'config_error') {
+            isDirty = true;
+            if (msg.code === 'config_conflict') {
+                configRevision = null;
+                configSaveBlocked = true;
+                setConnectionStatus('Config changed elsewhere; reload required', 'status-offline');
+            } else {
+                setConnectionStatus('Config was rejected', 'status-offline');
+            }
+            updateManualSaveBtn();
+            return;
+        }
+
         if (msg.type === 'config_sync' || msg.type === 'init_state' || msg.type === 'config_updated') {
             configData = msg.config;
+            configRevision = Number.isSafeInteger(msg.revision) && msg.revision >= 0
+                ? msg.revision
+                : null;
+            configSaveBlocked = false;
             isDirty = false;
             updateManualSaveBtn();
             renderSidebar();
@@ -226,7 +250,11 @@ authForm.addEventListener('submit', (event) => {
         return;
     }
     setConnectionStatus('Authenticating...', 'status-offline');
-    ws.send(JSON.stringify({ type: 'authenticate', pairing_code: pairingCode }));
+    ws.send(JSON.stringify({
+        type: 'authenticate',
+        pairing_code: pairingCode,
+        protocol_version: CLIENT_PROTOCOL_VERSION,
+    }));
 });
 
 connectWebSocket();
@@ -264,10 +292,18 @@ manualSaveBtn.addEventListener('click', () => {
 });
 
 function saveConfig() {
-    const sent = sendAuthenticatedMessage({
+    if (configSaveBlocked) {
+        setConnectionStatus('Reload the configurator before saving', 'status-offline');
+        return;
+    }
+    const payload = {
         type: "save_config",
-        config: configData
-    });
+        config: configData,
+    };
+    if (Number.isSafeInteger(configRevision) && configRevision >= 0) {
+        payload.revision = configRevision;
+    }
+    const sent = sendAuthenticatedMessage(payload);
     if (!sent) return;
     isDirty = false;
     updateManualSaveBtn();

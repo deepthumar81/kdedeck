@@ -92,6 +92,8 @@ security or UI/platform parity.
   fix the existing provider-less widget smoke test.
 - [ ] Web authenticated error/capacity/rate-limit/config rejection handling;
   avoid persistent JS-readable credentials and complete browser end-to-end tests.
+- [x] Send standalone protocol version and compare-and-swap config revisions from
+  the web configurator; block unsafe retry after a conflict (Step 47).
 - [ ] Android and Linux UX bugs, accessible layouts/drag/drop/sliders, undo,
   connection profiles and onboarding; record real device manual QA.
 - [ ] Windows/macOS adapters, capability-driven unsupported-feature UI, native
