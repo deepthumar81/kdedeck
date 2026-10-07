@@ -5,8 +5,13 @@ import 'dart:io';
 import 'package:backend/dart_server_service.dart';
 import 'package:backend/local_pairing_console.dart';
 import 'package:backend/local_session_recovery.dart';
+import 'package:backend/release_metadata.dart';
 
 Future<void> main(List<String> arguments) async {
+  if (arguments.length == 1 && arguments.single == '--version') {
+    stdout.writeln(StandaloneReleaseMetadata.displayName);
+    return;
+  }
   if (arguments.length == 1 && arguments.single == '--reset-sessions') {
     exitCode = resetLocalSessionsFromTerminal();
     return;

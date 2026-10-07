@@ -1778,3 +1778,44 @@ This enforces an optional version on the standalone authentication boundary.
 Embedded Flutter convergence, client-side version handling, protocol migration
 policy, production persistence, and the versioned in-place updater remain
 pending.
+
+## Step 44 — Expose standalone daemon release metadata
+
+### Goal
+
+Create a small, scriptable release identity for the standalone daemon without
+starting a listener or changing its persisted-data behavior.
+
+### Changes
+
+- Added `StandaloneReleaseMetadata` with artifact name `kdedeck_daemon`, version
+  `1.0.0`, build `1`, and display value `kdedeck_daemon 1.0.0+1`.
+- Added `--version` handling to the daemon entry point; it prints the release
+  identity and exits before server startup.
+- Aligned the backend package version with the release version/build metadata.
+- Added regression coverage and documented the command in the root README.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/release_metadata.dart`
+- `deckboard_daemon/backend/bin/backend.dart`
+- `deckboard_daemon/backend/pubspec.yaml`
+- `deckboard_daemon/backend/test/release_metadata_test.dart`
+- `README.md`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `dart test test/release_metadata_test.dart -r compact`: **PASS**, 1 test.
+- `dart run bin/backend.dart --version`: **PASS**, prints
+  `kdedeck_daemon 1.0.0+1` and exits without opening a listener.
+- Full backend `dart test -r compact`: **PASS**, 195 tests.
+- Focused `dart analyze`: **PASS**, no issues.
+- `dart format --set-exit-if-changed ...` and `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This establishes standalone daemon metadata only. Flutter package identity,
+stable Android/Linux application IDs, signed artifacts, migration automation,
+atomic replacement, rollback, and clean-install/upgrade tests remain pending.

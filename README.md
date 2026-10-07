@@ -41,6 +41,12 @@ We provide fully compiled, standalone binaries.
    ```
 3. The server will start silently on port `8484`.
 
+To inspect the daemon release identity without starting a listener:
+
+```bash
+./kdedeck_daemon --version
+```
+
 ### 2. The Android Frontend
 1. Download the `app-release.apk` file to your Android phone.
 2. Install the APK.
