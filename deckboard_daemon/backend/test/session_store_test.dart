@@ -420,6 +420,35 @@ void main() {
     );
     expect(manager().validateToken(original.token), isNull);
   });
+
+  test('failed marker clear preserves fail-closed recovery', () {
+    final original = manager().authenticate('pairing-secret')!;
+    final snapshot = file.readAsStringSync();
+    store.close();
+    final unavailable = FileSessionStore(
+      file.path,
+      beforePendingClear: () =>
+          throw StateError('injected marker clear failure'),
+    );
+    final active = AuthSessionManager(
+      issueCodeOnCreate: false,
+      clock: () => now,
+      sessionStore: unavailable,
+    );
+    expect(active.revokeToken(original.token), isFalse);
+    expect(active.validateToken(original.token), isNull);
+    expect(file.readAsStringSync(), isNot(snapshot));
+    expect(jsonDecode(file.readAsStringSync())['sessions'], isEmpty);
+    final pending = File('${file.path}.pending');
+    expect(pending.existsSync(), isTrue);
+    unavailable.close();
+    store = FileSessionStore(file.path);
+    expect(
+      () => store.read(maxSessions: 100),
+      throwsA(isA<SessionStoreException>()),
+    );
+    expect(manager().validateToken(original.token), isNull);
+  });
 }
 
 class _FailingStore implements SessionStore {

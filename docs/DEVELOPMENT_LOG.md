@@ -1859,3 +1859,48 @@ so future in-place updates address the same installed application.
 This establishes Android/Linux identity only. iOS/macOS bundle identifiers,
 signed artifacts, migrations, atomic replacement, rollback, and clean-install /
 upgrade tests remain pending.
+
+## Step 46 — Standalone persistence safety and conflict boundary
+
+### Goal
+
+Harden the standalone persistence boundaries and exercise them through the
+public server without turning the opt-in test seam into production behavior.
+
+### Changes
+
+- Added `deckboard_daemon/backend/test/server_persistence_safety_test.dart`.
+- Session-store writes now retain the pending marker if clearing it fails after
+  the new snapshot has been installed, preserving fail-closed restart behavior.
+- Authenticated standalone `init_state` and `config_updated` messages now carry
+  an in-process config revision. Explicit stale saves receive a bounded
+  `config_conflict` response and cannot overwrite active or persisted config;
+  clients omitting the field remain backward-compatible.
+- The integration coverage starts a standalone server with the explicit
+  `sessionStoreFactory` test seam, authenticates over WebSocket, saves a valid
+  configuration, rejects a stale revision without changing the saved file,
+  stops it, then creates a fresh server instance and reconnects with the
+  restored bearer token. The fresh instance loads the saved config and starts
+  a new in-memory revision counter.
+- The failure case injects a session-store marker-clear failure and verifies the
+  public protocol returns only a bounded credential-neutral authentication
+  error; the pending marker then prevents a restarted server from listening.
+- All storage fixtures use temporary paths. Production startup remains in-memory.
+
+### Verification
+
+- `dart test test/server_persistence_safety_test.dart -r expanded`: **PASS**,
+  2 tests (Flutter-bundled Dart SDK).
+- Full backend `dart test -r compact`: **PASS**, 199 tests.
+- Focused session-store/config/server tests: **PASS**.
+- `dart analyze test/server_persistence_safety_test.dart`: **PASS**, no issues.
+- `dart format --output=none --set-exit-if-changed
+  test/server_persistence_safety_test.dart`: **PASS**, zero files changed.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This records public-server coverage for the opt-in test persistence boundary.
+Production persistence is not solved: storage-failure policy, directory
+durability, cross-platform replacement/ACL behavior, multi-isolate ownership,
+and production startup wiring remain pending.

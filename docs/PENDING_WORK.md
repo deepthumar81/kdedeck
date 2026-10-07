@@ -37,6 +37,9 @@ security or UI/platform parity.
   Linux subprocess release/exit tested (Step 30).
 - [x] Integrate injected store acquisition/release/restart with standalone
   lifecycle; production persistence unchanged (Step 31).
+- [x] Cover opt-in standalone persistence through the public server across
+  save, conflict, restart, and storage failure (Step 46); production persistence
+  remains disabled.
 - [x] Fence stale standalone WebSocket upgrades, messages, and state-changing
   continuations across stop/restart (Step 32).
 - [x] Serialize standalone start/stop requests in invocation order, including
@@ -66,8 +69,10 @@ security or UI/platform parity.
   (Step 38).
 - [ ] Define safe ownership/lifetime for user-launched applications and process
   trees across platforms; remove fabricated metrics.
-- [ ] Config revision/conflict detection, restrictive file permissions, injected
-  persistence failure tests, cross-platform atomic replacement verification.
+- [x] Add standalone in-process config revision/conflict detection and injected
+  persistence failure coverage (Step 46).
+- [ ] Verify restrictive config-file permissions and cross-platform atomic
+  replacement behavior.
 - [x] Add a backward-compatible `config_schema_version` marker and reject
   unsupported versions without rewriting legacy files (Step 42).
 - [ ] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
@@ -109,7 +114,7 @@ security or UI/platform parity.
 Completed slices so far: documentation baseline, test/executor seams, standalone
 auth gates, per-peer failed-attempt throttling, config validation/backup, bounded
 session manager, capacity response, safe bind defaults, TLS listener, and explicit
-foreground terminal pairing, an opt-in persisted session-store boundary, and
-standalone protocol metadata advertisement. Embedded-server convergence and
-compatibility enforcement remain pending.
+foreground terminal pairing, an opt-in persisted session-store boundary with
+public-server safety coverage, and standalone protocol metadata advertisement.
+Embedded-server convergence and compatibility enforcement remain pending.
 Automated checks do not replace device/browser QA.

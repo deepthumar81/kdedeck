@@ -121,6 +121,57 @@ void main() {
     },
   );
 
+  test(
+    'explicit stale revisions receive a bounded conflict and preserve config',
+    () async {
+      final path = '${tempDirectory.path}/deckboard_config.json';
+      server = _newServer(path);
+      final connection = await _authenticatedClient(server!);
+      final client = connection.socket;
+      final messages = connection.messages;
+
+      expect(connection.init['revision'], 0);
+      client.add(
+        jsonEncode({'type': 'save_config', 'config': _config('first')}),
+      );
+      final firstUpdate = await messages.next();
+      expect(firstUpdate['type'], 'config_updated');
+      expect(firstUpdate['revision'], 1);
+      final savedText = await File(path).readAsString();
+
+      client.add(
+        jsonEncode({
+          'type': 'save_config',
+          'revision': 0,
+          'config': _config('stale'),
+        }),
+      );
+      expect(await messages.next(), {
+        'type': 'config_error',
+        'code': 'config_conflict',
+        'revision': 1,
+      });
+      expect(server!.configRevision, 1);
+      expect(server!.configData?['boards'][0]['id'], 'first');
+      expect(await File(path).readAsString(), savedText);
+
+      client.add(
+        jsonEncode({
+          'type': 'save_config',
+          'revision': 1,
+          'config': _config('second'),
+        }),
+      );
+      final secondUpdate = await messages.next();
+      expect(secondUpdate['type'], 'config_updated');
+      expect(secondUpdate['revision'], 2);
+      expect(server!.configData?['boards'][0]['id'], 'second');
+
+      await messages.close();
+      await client.close();
+    },
+  );
+
   test('successful saves create an atomic last-known-good backup', () async {
     final path = '${tempDirectory.path}/deckboard_config.json';
     server = _newServer(path);

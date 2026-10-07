@@ -40,7 +40,8 @@ Only the JSON boolean `true` opts into the LAN bind (`anyIPv4`, normally
 the IPv4 loopback address (`127.0.0.1`). Arbitrary `bind_address` values are
 not supported, and no WebSocket request can select a remote bind address.
 Changes made through `save_config` take effect after the daemon restarts; the
-current WebSocket protocol and endpoint remain unchanged. Startup logs report
+current WebSocket protocol and endpoint remain unchanged. Each authenticated
+`init_state` includes an in-process `revision` counter. Startup logs report
 only the selected loopback or LAN mode and address/port, never configuration
 contents or credentials. Non-loopback listeners now require valid TLS.
 
@@ -196,6 +197,7 @@ do not invoke command execution, configuration persistence, or app discovery.
   "capabilities": ["trigger_action", "save_config", "get_system_apps"],
   "session_capabilities": ["view", "control", "configAdmin"],
   "config": { "boards": [] },
+  "revision": 0,
   "pin_required": true,
   "state": {
     "volume": 50,
@@ -273,6 +275,7 @@ is therefore not a Windows/macOS system-control implementation
 ```json
 {
   "type": "save_config",
+  "revision": 0,
   "config": {
     "config_schema_version": 1,
     "boards": [
@@ -301,6 +304,14 @@ fields commonly include `id`, `title`, `type`, `action`, `payload`, `icon`,
 `icon_base64` data URLs and `system_icon_path` references. Existing desktop-app
 payloads, slider types/spans, and safe actions (`launch_app`, `open_url`, audio,
 `mpris_action`, `kde_action`, and `clock_widget`) remain supported.
+
+`revision` is optional for legacy clients. When present, it must be a
+non-negative integer matching the latest revision advertised by `init_state` or
+`config_updated`; a stale value receives `{ "type": "config_error", "code":
+"config_conflict", "revision": <current> }` and cannot overwrite the active
+configuration. Invalid supplied revisions receive `invalid_revision`. Revisions
+are in-memory process-lifetime guards and are not written into user config
+files, so a restarted daemon starts at revision `0`.
 
 The validator also bounds board/item counts, IDs, titles, payloads, icon data,
 nesting, and serialized size; rejects non-finite/fractional values, malformed
@@ -360,11 +371,13 @@ request/response features ([`websocket_service.dart`](../kdedeck_mobile/lib/serv
 ### `config_updated`
 
 ```json
-{ "type": "config_updated", "config": { "boards": [] } }
+{ "type": "config_updated", "revision": 1, "config": { "boards": [] } }
 ```
 
 This is broadcast after a successful `save_config` handling path. The web and
-Flutter clients replace their current config with the supplied map.
+Flutter clients replace their current config with the supplied map and may use
+`revision` for compare-and-swap saves. Clients that do not send a revision keep
+the legacy last-write-wins behavior.
 
 ### `state_update`
 
@@ -424,8 +437,8 @@ a safe public HTTP file server.
 
 The existing action names and config keys should remain stable for Linux
 clients. A future protocol should add, rather than silently reinterpret,
-capability discovery, request IDs, config revision/conflict handling, and
-optional authentication. Windows/macOS action implementations should sit behind
+capability discovery, request IDs, and fully negotiated config compatibility.
+Windows/macOS action implementations should sit behind
 platform adapters while retaining the same
 logical actions where semantics match. Linux D-Bus, PulseAudio/PipeWire,
 sysfs, `/proc`, desktop-entry, Flatpak, Snap, and icon behavior is the baseline

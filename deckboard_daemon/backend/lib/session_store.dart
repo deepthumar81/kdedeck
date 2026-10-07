@@ -273,6 +273,7 @@ class FileSessionStore implements SessionStore {
       temporaryPath = null;
       // A failed removal leaves the store unusable rather than allowing a
       // possibly stale snapshot to be accepted at the next startup.
+      _beforePendingClear?.call();
       pending.deleteSync();
     } catch (_) {
       throw const SessionStoreException();

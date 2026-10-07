@@ -264,6 +264,8 @@ class DartServerService {
 
   SensitiveActionPolicy get sensitiveActionPolicy => _sensitiveActionPolicy;
 
+  int get configRevision => _configRevision;
+
   /// Configures the production singleton's remote sensitive-action policy.
   ///
   /// Call this during local daemon setup, before accepting remote clients. No
@@ -283,6 +285,9 @@ class DartServerService {
   }
 
   Map<String, dynamic>? configData;
+  // Keep revisions out of persisted configs so legacy files remain compatible.
+  // They protect concurrent explicit saves for this daemon process lifetime.
+  int _configRevision = 0;
   int currentVolume = 50;
   int currentBrightness = 70;
   bool isMuted = false;
@@ -980,21 +985,37 @@ class DartServerService {
           return;
         }
         if (data['config'] != null) {
-          final savedConfig = await _saveConfigLocal(
+          final hasRevision = data.containsKey('revision');
+          final requestedRevision = hasRevision ? data['revision'] : null;
+          if (hasRevision &&
+              (requestedRevision is! int || requestedRevision < 0)) {
+            _sendToSocket(socket, {
+              "type": "config_error",
+              "code": "invalid_revision",
+            });
+            return;
+          }
+
+          final saveResult = await _saveConfigLocal(
             data['config'],
+            expectedRevision: requestedRevision is int
+                ? requestedRevision
+                : null,
             generation: generation,
           );
           if (!_isCurrentSocket(socket, generation)) return;
-          if (savedConfig == null) {
+          if (!saveResult.isSuccessful) {
             _sendToSocket(socket, {
               "type": "config_error",
-              "code": "invalid_config",
+              "code": saveResult.errorCode,
+              if (saveResult.isConflict) "revision": _configRevision,
             });
             return;
           }
           _broadcast({
             "type": "config_updated",
-            "config": savedConfig,
+            "config": saveResult.config,
+            "revision": saveResult.revision,
           }, requiredCapability: AuthCapability.configAdmin);
         } else {
           _sendToSocket(socket, {
@@ -1253,6 +1274,7 @@ class DartServerService {
           .map((capability) => capability.name)
           .toList(growable: false),
       "config": configData,
+      "revision": _configRevision,
       "pin_required": true,
       "state": {
         "volume": currentVolume,
@@ -1588,23 +1610,34 @@ class DartServerService {
         : InternetAddress.loopbackIPv4;
   }
 
-  Future<Map<String, dynamic>?> _saveConfigLocal(
+  Future<_ConfigSaveResult> _saveConfigLocal(
     Object? candidate, {
+    int? expectedRevision,
     required int generation,
   }) {
     final validation = _configValidator.validate(candidate);
     final validated = validation.config;
-    if (validated == null) return Future<Map<String, dynamic>?>.value(null);
+    if (validated == null) {
+      return Future<_ConfigSaveResult>.value(const _ConfigSaveResult.invalid());
+    }
 
     final operation = _saveOperation.then((_) async {
-      if (!_isCurrentSaveGeneration(generation)) return null;
+      if (!_isCurrentSaveGeneration(generation)) {
+        return const _ConfigSaveResult.unavailable();
+      }
+      if (expectedRevision != null && expectedRevision != _configRevision) {
+        return _ConfigSaveResult.conflict(_configRevision);
+      }
       final writer = _configWriter;
       final wrote = writer == null
           ? await _writeConfigAtomically(validated, configData)
           : await writer(validated, configData);
-      if (!wrote || !_isCurrentSaveGeneration(generation)) return null;
+      if (!wrote || !_isCurrentSaveGeneration(generation)) {
+        return const _ConfigSaveResult.unavailable();
+      }
+      _configRevision++;
       configData = validated;
-      return validated;
+      return _ConfigSaveResult.success(validated, _configRevision);
     });
     // A failed write must not poison later saves in the serialized queue.
     _saveOperation = operation.then<void>((_) {}, onError: (_) {});
@@ -1707,6 +1740,32 @@ class DartServerService {
       ],
     };
   }
+}
+
+final class _ConfigSaveResult {
+  const _ConfigSaveResult.success(this.config, this.revision)
+    : errorCode = null;
+
+  const _ConfigSaveResult.invalid()
+    : config = null,
+      revision = null,
+      errorCode = 'invalid_config';
+
+  const _ConfigSaveResult.unavailable()
+    : config = null,
+      revision = null,
+      errorCode = 'invalid_config';
+
+  const _ConfigSaveResult.conflict(this.revision)
+    : config = null,
+      errorCode = 'config_conflict';
+
+  final Map<String, dynamic>? config;
+  final int? revision;
+  final String? errorCode;
+
+  bool get isSuccessful => config != null;
+  bool get isConflict => errorCode == 'config_conflict';
 }
 
 enum _RequestLimitFailure {
