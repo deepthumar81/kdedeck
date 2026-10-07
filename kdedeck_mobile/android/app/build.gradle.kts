@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.kdedeck_mobile"
+    namespace = "io.github.deepthumar81.kdedeck"
     compileSdk = 36
 
     compileOptions {
@@ -13,7 +13,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.kdedeck_mobile"
+        applicationId = "io.github.deepthumar81.kdedeck"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

@@ -102,6 +102,9 @@ security or UI/platform parity.
 - [x] Expose the standalone daemon's stable artifact name, release version, and
   build number through `--version` (Step 44); package identity and updater
   automation remain pending.
+- [x] Replace generated Flutter Android/Linux example identifiers with the stable
+  application ID `io.github.deepthumar81.kdedeck` (Step 45); iOS/macOS bundle
+  identity and updater automation remain pending.
 
 Completed slices so far: documentation baseline, test/executor seams, standalone
 auth gates, per-peer failed-attempt throttling, config validation/backup, bounded

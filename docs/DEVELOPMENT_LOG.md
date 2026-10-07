@@ -1819,3 +1819,43 @@ starting a listener or changing its persisted-data behavior.
 This establishes standalone daemon metadata only. Flutter package identity,
 stable Android/Linux application IDs, signed artifacts, migration automation,
 atomic replacement, rollback, and clean-install/upgrade tests remain pending.
+
+## Step 45 — Establish stable Android/Linux application identity
+
+### Goal
+
+Remove generated Flutter example identifiers from the Android and Linux targets
+so future in-place updates address the same installed application.
+
+### Changes
+
+- Set the Android namespace and `applicationId` to
+  `io.github.deepthumar81.kdedeck`.
+- Moved `MainActivity` into the matching Kotlin package.
+- Set the Linux GTK application ID to the same stable identifier.
+- Recorded the identity decision in the pending-work tracker.
+
+### Changed files
+
+- `kdedeck_mobile/android/app/build.gradle.kts`
+- `kdedeck_mobile/android/app/src/main/kotlin/io/github/deepthumar81/kdedeck/MainActivity.kt`
+- `kdedeck_mobile/android/app/src/main/kotlin/com/example/kdedeck_mobile/MainActivity.kt`
+- `kdedeck_mobile/linux/CMakeLists.txt`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `flutter analyze`: **PASS**, no errors; 96 existing warnings/informational
+  diagnostics remain.
+- `flutter build apk --debug`: **PASS**, producing
+  `kdedeck_mobile/build/app/outputs/flutter-apk/app-debug.apk`.
+- A repository search found no remaining `com.example.kdedeck_mobile` identity.
+- Existing provider-less widget smoke-test status remains separate from this
+  native identity change.
+
+### Scope boundary
+
+This establishes Android/Linux identity only. iOS/macOS bundle identifiers,
+signed artifacts, migrations, atomic replacement, rollback, and clean-install /
+upgrade tests remain pending.
