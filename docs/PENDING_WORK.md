@@ -89,7 +89,9 @@ security or UI/platform parity.
 ## Clients, UX, platforms, releases
 
 - [ ] Flutter pairing/auth/WSS, secure token storage, expiry/reconnect/re-pair UI;
-  fix the existing provider-less widget smoke test.
+  record device QA.
+- [x] Fix the provider-less Flutter widget smoke test by matching the production
+  `WebSocketService` provider boundary (Step 48).
 - [ ] Web authenticated error/capacity/rate-limit/config rejection handling;
   avoid persistent JS-readable credentials and complete browser end-to-end tests.
 - [x] Send standalone protocol version and compare-and-swap config revisions from

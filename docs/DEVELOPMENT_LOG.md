@@ -1940,3 +1940,25 @@ servers or silently overwriting another client's changes.
 This covers web revision participation only. WebSocket credential storage,
 complete browser end-to-end tests, Flutter auth/WSS, and server-side production
 persistence remain pending.
+
+## Step 48 — Restore the Flutter provider smoke test
+
+### Goal
+
+Make the existing Flutter widget smoke test construct the app with the same
+`WebSocketService` provider boundary used by production startup.
+
+### Changes
+
+- Wrapped `KdeDeckApp` in `ChangeNotifierProvider<WebSocketService>` in the
+  smoke test.
+- Left production widget and connection behavior unchanged.
+
+### Verification
+
+- `flutter test test/widget_test.dart`: **PASS**.
+
+### Scope boundary
+
+This fixes only the provider setup in the smoke test. Flutter pairing/auth/WSS,
+secure token storage, expiry/reconnect UI, and device QA remain pending.
