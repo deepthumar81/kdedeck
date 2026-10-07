@@ -567,6 +567,42 @@ void main() {
   );
 
   test(
+    'rejects unsupported protocol versions without consuming pairing code',
+    () async {
+      final manager = AuthSessionManager(pairingCode: 'pairing-code');
+      server = _newServer(manager, executor, tempDirectory);
+      final client = await _connect(server!);
+      final messages = _MessageReader(client);
+      await messages.next();
+
+      client.add(
+        jsonEncode({
+          'type': 'authenticate',
+          'pairing_code': 'pairing-code',
+          'protocol_version': 2,
+        }),
+      );
+      expect(await messages.next(), {
+        'type': 'auth_error',
+        'code': 'unsupported_protocol_version',
+      });
+
+      client.add(
+        jsonEncode({
+          'type': 'authenticate',
+          'pairing_code': 'pairing-code',
+          'protocol_version': 1,
+        }),
+      );
+      expect((await messages.next())['type'], 'auth_success');
+      expect((await messages.next())['type'], 'init_state');
+
+      await messages.close();
+      await client.close();
+    },
+  );
+
+  test(
     'reconnects with the bearer token after the original socket closes',
     () async {
       final manager = AuthSessionManager(pairingCode: 'pairing-code');

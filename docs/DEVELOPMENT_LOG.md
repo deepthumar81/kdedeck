@@ -1736,3 +1736,45 @@ just because they omit a version marker.
 
 This adds a compatibility marker only. Version migrations, protocol negotiation,
 production persistence enablement, and release updater behavior remain pending.
+
+## Step 43 — Enforce an optional standalone protocol version
+
+### Goal
+
+Turn the existing standalone protocol advertisement into a small compatibility
+boundary without breaking clients that predate version negotiation.
+
+### Changes
+
+- Added optional `protocol_version` validation to standalone `authenticate`
+  frames.
+- Accepted omitted versions and the advertised version `1` for backward
+  compatibility.
+- Rejected unsupported or malformed supplied versions with the bounded
+  `unsupported_protocol_version` authentication error before credentials are
+  evaluated. Rejected versions do not consume pairing codes or create sessions.
+- Added authenticated integration coverage and documented the client message
+  shape and compatibility behavior.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/protocol_metadata.dart`
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/test/dart_server_auth_test.dart`
+- `docs/protocol.md`
+- `docs/PENDING_WORK.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- `dart test test/dart_server_auth_test.dart -r compact`: **PASS**, 37 tests.
+- Full backend `dart test -r compact`: **PASS**, 194 tests.
+- `dart format --set-exit-if-changed ...`: **PASS**, no files changed.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This enforces an optional version on the standalone authentication boundary.
+Embedded Flutter convergence, client-side version handling, protocol migration
+policy, production persistence, and the versioned in-place updater remain
+pending.

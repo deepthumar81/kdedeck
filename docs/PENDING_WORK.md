@@ -74,8 +74,12 @@ security or UI/platform parity.
   user-local Flatpak and package icon roots with no feature regression.
 - [ ] TLS certificate provisioning, verified fingerprint/trust workflow, expiry
   and hostname rejection fixtures, rotation UX and physical LAN verification.
+- [x] Reject explicitly unsupported protocol versions before standalone
+  authentication consumes credentials (Step 43); omitted versions remain
+  backward-compatible.
 - [ ] Converge embedded Flutter server with shared auth/validation/TLS policy;
-  protocol compatibility enforcement and server lifecycle/tray path reliability.
+  complete cross-server/client compatibility enforcement and server
+  lifecycle/tray path reliability.
 
 ## Clients, UX, platforms, releases
 

@@ -1074,6 +1074,13 @@ class DartServerService {
   }
 
   void _authenticate(Map<dynamic, dynamic> data, WebSocket socket) {
+    if (!StandaloneProtocolMetadata.acceptsClientVersion(
+      data['protocol_version'],
+    )) {
+      _sendAuthError(socket, 'unsupported_protocol_version');
+      return;
+    }
+
     final existingSession = _sessionFor(socket);
     final clientIdentity = _clientIdentities[socket];
     if (existingSession == null &&

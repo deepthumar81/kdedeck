@@ -9,6 +9,12 @@ final class StandaloneProtocolMetadata {
   /// Stable wire-protocol version advertised by the standalone server.
   static const int protocolVersion = 1;
 
+  /// Returns whether an optional client protocol version is supported.
+  ///
+  /// `null` is accepted for older clients that predate version negotiation.
+  static bool acceptsClientVersion(Object? version) =>
+      version == null || version == protocolVersion;
+
   /// Protocol operations currently supported by the standalone server.
   static const List<String> capabilities = <String>[
     'trigger_action',

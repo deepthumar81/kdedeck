@@ -98,14 +98,28 @@ screenshots of it. Background/tray mode has no pairing display yet; use this
 foreground workflow and do not start a second daemon on an occupied port.
 
 ```json
-{ "type": "authenticate", "pairing_code": "<pairing-code>" }
+{
+  "type": "authenticate",
+  "pairing_code": "<pairing-code>",
+  "protocol_version": 1
+}
 ```
 
 Reconnect with a token returned by a prior successful pairing:
 
 ```json
-{ "type": "authenticate", "token": "<bearer-token>" }
+{
+  "type": "authenticate",
+  "token": "<bearer-token>",
+  "protocol_version": 1
+}
 ```
+
+`protocol_version` is optional for backward compatibility. When present, the
+standalone server accepts only the advertised version; an unsupported value is
+rejected with `{ "type": "auth_error", "code":
+"unsupported_protocol_version" }` before credentials are evaluated. A rejected
+version does not consume a pairing code or create a session.
 
 On success the standalone server returns the bearer token, its assigned role,
 and then `init_state`:
