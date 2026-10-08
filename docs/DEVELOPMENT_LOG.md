@@ -1999,6 +1999,25 @@ command-string configuration requires explicit migration before it can be used
 with the hardened standalone validator. Process-tree ownership and local admin
 UI for editing the registry remain pending.
 
+## Step 51 — Reap lock-probe subprocesses
+
+### Goal
+
+Prevent a timed-out session-store lock probe from surviving its test and
+retaining the lock during later or parallel test cases.
+
+### Changes
+
+- Replaced `Process.run(...).timeout(...)` with an explicitly managed child
+  process in the lock-probe helper.
+- Terminate and reap probe processes in all outcomes, including timeout.
+- Await cleanup of the long-lived `hold` probe in its failure path.
+
+### Verification
+
+- `dart test -j 1`: **207 tests passed**.
+- `dart test -j 4 test/session_store_lock_test.dart`: **5 tests passed**.
+
 ## Step 49 — Harden web configurator recovery
 
 ### Goal

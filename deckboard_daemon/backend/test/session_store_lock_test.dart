@@ -20,14 +20,28 @@ void main() {
   });
 
   Future<String> probe(String operation) async {
-    final result = await Process.run(Platform.resolvedExecutable, [
+    final child = await Process.start(Platform.resolvedExecutable, [
       'run',
       'test/support/session_store_lock_probe.dart',
       primary.path,
       operation,
-    ]).timeout(const Duration(seconds: 20));
-    expect(result.exitCode, 0, reason: result.stderr.toString());
-    return result.stdout.toString().trim();
+    ]);
+    final exitCode = child.exitCode;
+    final stdout = child.stdout.transform(utf8.decoder).join();
+    final stderr = child.stderr.transform(utf8.decoder).join();
+    try {
+      final code = await exitCode.timeout(const Duration(seconds: 20));
+      final output = await stdout;
+      final error = await stderr;
+      expect(code, 0, reason: error);
+      return output.trim();
+    } finally {
+      // Process.run's timeout does not terminate its child. Always reap the
+      // probe so a timed-out Dart subprocess cannot retain the lock for the
+      // next test or another parallel test isolate.
+      child.kill();
+      await exitCode.timeout(const Duration(seconds: 2), onTimeout: () => -1);
+    }
   }
 
   test('same-process duplicate denied; close is idempotent and terminal', () {
@@ -100,6 +114,10 @@ void main() {
       expect(store.read(maxSessions: 100), isEmpty);
     } finally {
       child.kill();
+      await child.exitCode.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => -1,
+      );
     }
   });
 

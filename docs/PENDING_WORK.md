@@ -54,8 +54,9 @@ security or UI/platform parity.
   marker-creation/storage failure. Verify
    directory durability, Windows replacement/ACLs, cross-platform locking and
    multi-isolate ownership. Audit in-flight operation shutdown ordering.
-- [ ] Stabilize lock-probe subprocess tests under parallel suite load; serial
-  backend suite passes, but one parallel probe timed out during Step 31.
+- [x] Stabilize lock-probe subprocess cleanup under parallel suite load; timed
+  probes are now terminated and reaped instead of retaining the session lock
+  (Step 51).
 - [ ] Local approval and role selection instead of always pairing as configAdmin;
   background/tray local pairing without logging codes.
 - [x] Gate sensitive power/session actions behind an explicit policy and local
