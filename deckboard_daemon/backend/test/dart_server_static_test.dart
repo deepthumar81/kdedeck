@@ -15,8 +15,10 @@ void main() {
     await File('${fixtureRoot.path}/index.html')
         .writeAsString('<html>fixture</html>');
     await File('${fixtureRoot.path}/style.css').writeAsString('body {}');
-    await File('${fixtureRoot.path}/app.js')
-        .writeAsString('const fixture = 1;');
+      await File('${fixtureRoot.path}/app.js')
+          .writeAsString('const fixture = 1;');
+      await File('${fixtureRoot.path}/module.mjs')
+          .writeAsString('export const fixture = 1;');
     await File('${fixtureRoot.path}/asset.json').writeAsString('{"ok":true}');
     await Directory('${fixtureRoot.path}/assets').create();
     await File('${fixtureRoot.path}/assets/icon.png').writeAsBytes([1, 2, 3]);
@@ -51,6 +53,11 @@ void main() {
       expect(js.statusCode, HttpStatus.ok);
       expect(js.body, 'const fixture = 1;');
       expect(js.contentType, 'application/javascript');
+
+      final module = await _get(server!, '/module.mjs');
+      expect(module.statusCode, HttpStatus.ok);
+      expect(module.body, 'export const fixture = 1;');
+      expect(module.contentType, 'application/javascript');
 
       final asset = await _get(server!, '/asset.json');
       expect(asset.statusCode, HttpStatus.ok);

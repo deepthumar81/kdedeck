@@ -166,8 +166,11 @@ retained pairing code can be used for a new session.
 The standalone web configurator waits for `auth_required` before sending any
 privileged request. It prompts for the one-time pairing code when no session is
 available, then stores the returned bearer token under `kdedeck.authToken` in
-browser `sessionStorage` and `localStorage` for reconnects. An invalid saved
-token clears both storage entries and returns the UI to the pairing prompt.
+browser `sessionStorage` only for reconnects in the current browser session.
+Legacy `localStorage` copies are removed on startup. An invalid saved token
+clears the session entry and returns the UI to the pairing prompt. Browser
+session storage is still JavaScript-readable; it is not a substitute for a
+browser-isolated credential store.
 Installed-app discovery begins only after `init_state` has been received, and
 configuration saves remain gated on the authenticated WebSocket session.
 

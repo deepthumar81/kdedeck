@@ -92,8 +92,10 @@ security or UI/platform parity.
   record device QA.
 - [x] Fix the provider-less Flutter widget smoke test by matching the production
   `WebSocketService` provider boundary (Step 48).
-- [ ] Web authenticated error/capacity/rate-limit/config rejection handling;
-  avoid persistent JS-readable credentials and complete browser end-to-end tests.
+- [ ] Complete browser end-to-end tests for authenticated error/capacity/
+  rate-limit/config rejection handling.
+- [x] Keep web bearer tokens in session-only storage, preserve dirty drafts across
+  reconnect/rejection paths, and provide explicit config recovery (Step 49).
 - [x] Send standalone protocol version and compare-and-swap config revisions from
   the web configurator; block unsafe retry after a conflict (Step 47).
 - [ ] Android and Linux UX bugs, accessible layouts/drag/drop/sliders, undo,

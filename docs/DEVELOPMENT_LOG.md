@@ -1962,3 +1962,39 @@ Make the existing Flutter widget smoke test construct the app with the same
 
 This fixes only the provider setup in the smoke test. Flutter pairing/auth/WSS,
 secure token storage, expiry/reconnect UI, and device QA remain pending.
+
+## Step 49 — Harden web configurator recovery
+
+### Goal
+
+Keep web configuration edits recoverable while making authentication and server
+rejection states actionable, without changing standalone persistence or the
+embedded Flutter server.
+
+### Changes
+
+- Store the standalone bearer token only in `sessionStorage`; remove the legacy
+  persistent `localStorage` token on startup.
+- Map rate-limit, session-capacity, protocol, authentication, permission, and
+  configuration failures to bounded user-facing messages.
+- Preserve a dirty local draft when a reconnect or server broadcast delivers a
+  newer configuration instead of silently replacing the draft.
+- Block unsafe saves after a revision conflict and add an explicit
+  `Reload Server Config` action that discards the draft only after the user
+  chooses it.
+- Keep action failures visible without reopening the pairing dialog for an
+  authenticated session.
+
+### Verification
+
+- `node --test deckboard_daemon/frontend/ui_policy.test.mjs`: required.
+- `node --check deckboard_daemon/frontend/app.js`: required.
+- `dart test test/dart_server_static_test.dart`: required for the module asset
+  used by the browser configurator.
+- `git diff --check`: required.
+
+### Scope boundary
+
+Browser end-to-end coverage, Flutter WSS/secure device credential storage,
+certificate trust UX, and backend application-execution authorization remain
+pending.

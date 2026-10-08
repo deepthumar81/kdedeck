@@ -1,3 +1,10 @@
+import {
+    authErrorMessage,
+    configErrorMessage,
+    hasUsableRevision,
+    shouldPreserveLocalDraft,
+} from './ui_policy.mjs';
+
 const AUTH_TOKEN_STORAGE_KEY = 'kdedeck.authToken';
 const CLIENT_PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 2000;
@@ -27,6 +34,7 @@ const authModal = document.getElementById('auth-modal');
 const authForm = document.getElementById('auth-form');
 const pairingCodeInput = document.getElementById('pairing-code');
 const authErrorEl = document.getElementById('auth-error');
+const reloadConfigBtn = document.getElementById('reload-config-btn');
 
 function availableStorages() {
     const storages = [];
@@ -35,12 +43,15 @@ function availableStorages() {
     } catch (_) {
         // Storage can be unavailable in private/restricted browser contexts.
     }
+    return storages;
+}
+
+function clearLegacyPersistentAuthToken() {
     try {
-        storages.push(window.localStorage);
+        window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     } catch (_) {
         // Storage can be unavailable in private/restricted browser contexts.
     }
-    return storages;
 }
 
 function readAuthToken(storage) {
@@ -80,6 +91,25 @@ function setConnectionStatus(text, className) {
     statusEl.className = className;
 }
 
+function updateRecoveryControls() {
+    reloadConfigBtn.style.display = configSaveBlocked ? 'block' : 'none';
+    reloadConfigBtn.disabled = !configSaveBlocked;
+}
+
+function preserveDraftUntilReload(message) {
+    configRevision = null;
+    configSaveBlocked = true;
+    isDirty = true;
+    setConnectionStatus(message, 'status-offline');
+    updateManualSaveBtn();
+    updateRecoveryControls();
+}
+
+function discardDraftAndReload() {
+    if (!configSaveBlocked) return;
+    window.location.reload();
+}
+
 function createTextElement(tagName, className, text) {
     const element = document.createElement(tagName);
     if (className) element.className = className;
@@ -104,6 +134,8 @@ function hideAuthModal() {
     authErrorEl.textContent = '';
     pairingCodeInput.value = '';
 }
+
+clearLegacyPersistentAuthToken();
 
 function sendAuthenticatedMessage(payload) {
     if (!isAuthenticated || !ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -184,41 +216,57 @@ function handleWebSocketMessage(event) {
         }
 
         if (msg.type === 'auth_error') {
-            isAuthenticated = false;
+            if (msg.code !== 'insufficient_permissions') {
+                isAuthenticated = false;
+            }
             if (msg.code === 'invalid_credentials') {
                 clearStoredAuthToken();
                 setConnectionStatus('Pairing required', 'status-offline');
-                showAuthModal('The pairing code or saved session is invalid. Enter a new pairing code.');
+                showAuthModal(authErrorMessage(msg.code));
+            } else if (msg.code === 'insufficient_permissions') {
+                setConnectionStatus('Permission denied', 'status-offline');
+                authErrorEl.textContent = authErrorMessage(msg.code);
+            } else if (msg.code === 'authentication_required') {
+                setConnectionStatus('Pairing required', 'status-offline');
+                showAuthModal(authErrorMessage(msg.code));
             } else {
                 setConnectionStatus('Authentication error', 'status-offline');
-                showAuthModal('Authentication was not accepted. Try again.');
+                showAuthModal(authErrorMessage(msg.code));
             }
             return;
         }
 
         if (!isAuthenticated) return;
 
+        if (msg.type === 'action_error') {
+            setConnectionStatus(`Action failed: ${msg.action || 'request'}`, 'status-offline');
+            return;
+        }
+
         if (msg.type === 'config_error') {
             isDirty = true;
             if (msg.code === 'config_conflict') {
-                configRevision = null;
-                configSaveBlocked = true;
-                setConnectionStatus('Config changed elsewhere; reload required', 'status-offline');
+                preserveDraftUntilReload(configErrorMessage(msg.code));
             } else {
-                setConnectionStatus('Config was rejected', 'status-offline');
+                setConnectionStatus(configErrorMessage(msg.code), 'status-offline');
             }
             updateManualSaveBtn();
             return;
         }
 
         if (msg.type === 'config_sync' || msg.type === 'init_state' || msg.type === 'config_updated') {
+            if (shouldPreserveLocalDraft(configData, isDirty)) {
+                preserveDraftUntilReload('Server config changed; local edits are preserved until reload');
+                return;
+            }
             configData = msg.config;
-            configRevision = Number.isSafeInteger(msg.revision) && msg.revision >= 0
+            configRevision = hasUsableRevision(msg.revision)
                 ? msg.revision
                 : null;
             configSaveBlocked = false;
             isDirty = false;
             updateManualSaveBtn();
+            updateRecoveryControls();
             renderSidebar();
             renderGrid();
             if (msg.type === 'init_state') requestSystemApps();
@@ -276,6 +324,7 @@ function markDirty() {
 
 function updateManualSaveBtn() {
     manualSaveBtn.style.display = autoSave ? 'none' : 'block';
+    manualSaveBtn.disabled = configSaveBlocked;
     if (!autoSave) {
         if (isDirty) {
             manualSaveBtn.style.backgroundColor = 'var(--success-color)';
@@ -286,6 +335,8 @@ function updateManualSaveBtn() {
         }
     }
 }
+
+reloadConfigBtn.addEventListener('click', discardDraftAndReload);
 
 manualSaveBtn.addEventListener('click', () => {
     if (isDirty) saveConfig();
