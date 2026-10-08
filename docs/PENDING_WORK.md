@@ -60,8 +60,9 @@ security or UI/platform parity.
   background/tray local pairing without logging codes.
 - [x] Gate sensitive power/session actions behind an explicit policy and local
   confirmation for sleep, shutdown, and logout (Step 39).
-- [ ] Restrict application execution to approved identities; no arbitrary
-  executable or interpreter invocation even when argv has no shell syntax.
+- [x] Restrict standalone application execution to locally approved opaque
+  identities; no arbitrary executable or interpreter invocation even when argv
+  has no shell syntax (Step 50). Legacy command-string configs require migration.
 - [x] Return bounded action results/errors and preserve state after command
   failures (Step 37).
 - [x] Bound control, discovery, and metrics subprocesses with deadlines,

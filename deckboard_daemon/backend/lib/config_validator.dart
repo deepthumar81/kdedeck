@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'app_discovery.dart';
+import 'approved_application_registry.dart';
 
 const int currentConfigSchemaVersion = 1;
 
@@ -313,7 +313,8 @@ class ConfigValidator {
         ? null
         : _nullableString(rawPayload, '$path.payload', limits.maxPayloadLength);
     if (action == 'launch_app') {
-      if (payload == null || DesktopEntryParser.parseExec(payload) == null) {
+      if (payload == null ||
+          !ApprovedApplicationRegistry.isValidIdentity(payload)) {
         throw const _ConfigValidationException('unsafe_launch_payload');
       }
     } else if (action == 'open_url') {

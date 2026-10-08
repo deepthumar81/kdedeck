@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:backend/approved_application_registry.dart';
 import 'package:backend/command_executor.dart';
+import 'package:backend/app_discovery.dart';
 import 'package:backend/system_actions_service.dart';
 import 'package:test/test.dart';
 
@@ -49,7 +51,7 @@ void main() {
         'https://example.test/path?q=one%20two',
         'HTTPS://example.test/uppercase-scheme',
       ]) {
-        await SystemActionsService.executeLaunch(url, executor: executor);
+        await SystemActionsService.executeOpenUrl(url, executor: executor);
       }
 
       expect(executor.invocations, hasLength(3));
@@ -74,7 +76,7 @@ void main() {
       );
       executor.exitCode = 1;
       expect(
-        await SystemActionsService.executeLaunch(
+        await SystemActionsService.executeOpenUrl(
           'https://example.test/failure',
           executor: executor,
         ),
@@ -83,7 +85,7 @@ void main() {
       executor.exitCode = 0;
       executor.error = StateError('injected failure');
       expect(
-        await SystemActionsService.executeLaunch(
+        await SystemActionsService.executeOpenUrl(
           'https://example.test/exception',
           executor: executor,
         ),
@@ -95,7 +97,7 @@ void main() {
       if (!Platform.isLinux) return;
 
       const url = 'https://example.test/path?x=one;echo-pwned|cat\$(id)';
-      await SystemActionsService.executeLaunch(url, executor: executor);
+      await SystemActionsService.executeOpenUrl(url, executor: executor);
 
       expect(executor.invocations, hasLength(1));
       expect(executor.invocations.single.executable, 'xdg-open');
@@ -112,7 +114,7 @@ void main() {
         'http://',
         'https:///missing-host',
       ]) {
-        await SystemActionsService.executeLaunch(value, executor: executor);
+        await SystemActionsService.executeOpenUrl(value, executor: executor);
       }
 
       expect(executor.invocations, isEmpty);
@@ -126,7 +128,7 @@ void main() {
           'https://example.test/path\rnext',
           'https://example.test/path\tvalue',
         ]) {
-          await SystemActionsService.executeLaunch(value, executor: executor);
+          await SystemActionsService.executeOpenUrl(value, executor: executor);
         }
 
         expect(executor.invocations, isEmpty);
@@ -141,25 +143,35 @@ void main() {
       executor = _RecordingExecutor();
     });
 
-    test('passes application payloads as an executable and argv', () async {
-      if (!Platform.isLinux) return;
+    test(
+      'resolves an approved identity to server-owned executable and argv',
+      () async {
+        if (!Platform.isLinux) return;
 
-      await SystemActionsService.executeLaunch(
-        '/usr/bin/example --title "A quoted title" --mode=test',
-        executor: executor,
-      );
+        await SystemActionsService.executeLaunch(
+          'example',
+          executor: executor,
+          registry: ApprovedApplicationRegistry({
+            'example': LaunchCommand('/usr/bin/example', [
+              '--title',
+              'A quoted title',
+              '--mode=test',
+            ]),
+          }),
+        );
 
-      expect(executor.invocations, hasLength(1));
-      expect(executor.invocations.single.executable, '/usr/bin/example');
-      expect(executor.invocations.single.arguments, [
-        '--title',
-        'A quoted title',
-        '--mode=test',
-      ]);
-      expect(executor.invocations.single.environment, {'DISPLAY': ':0'});
-    });
+        expect(executor.invocations, hasLength(1));
+        expect(executor.invocations.single.executable, '/usr/bin/example');
+        expect(executor.invocations.single.arguments, [
+          '--title',
+          'A quoted title',
+          '--mode=test',
+        ]);
+        expect(executor.invocations.single.environment, {'DISPLAY': ':0'});
+      },
+    );
 
-    test('launches Flatpak and Snap payloads without a shell', () async {
+    test('rejects unknown and command-shaped application identities', () async {
       if (!Platform.isLinux) return;
 
       await SystemActionsService.executeLaunch(
@@ -167,19 +179,11 @@ void main() {
         executor: executor,
       );
       await SystemActionsService.executeLaunch(
-        'snap run example-app',
+        '/usr/bin/example',
         executor: executor,
       );
 
-      expect(
-        executor.invocations.map(
-          (invocation) => [invocation.executable, ...invocation.arguments],
-        ),
-        [
-          ['flatpak', 'run', '--branch=stable', 'com.example.App'],
-          ['snap', 'run', 'example-app'],
-        ],
-      );
+      expect(executor.invocations, isEmpty);
     });
 
     test(
@@ -191,6 +195,8 @@ void main() {
           r'example $(id)',
           'example\nnext',
           'example "unterminated',
+          'python3',
+          'env python3 -c id',
         ]) {
           await SystemActionsService.executeLaunch(payload, executor: executor);
         }

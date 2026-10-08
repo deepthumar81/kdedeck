@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:backend/auth_session_manager.dart';
+import 'package:backend/approved_application_registry.dart';
+import 'package:backend/app_discovery.dart';
 import 'package:backend/command_executor.dart';
 import 'package:backend/dart_server_service.dart';
 import 'package:test/test.dart';
@@ -69,26 +71,77 @@ void main() {
     await session.socket.close();
   });
 
-  test('uses an injected command executor for launches when no launch executor is set', () async {
+  test(
+    'authenticated launch resolves only approved identities to fixed commands',
+    () async {
+      if (!Platform.isLinux) return;
+
+      final injected = _RecordingExecutor();
+      server = _newServer(commandExecutor: injected);
+      final session = await _authenticatedSocket(server!);
+
+      session.socket.add(
+        jsonEncode({
+          'type': 'trigger_action',
+          'action': 'launch_app',
+          'payload': 'example',
+        }),
+      );
+      expect(await session.messages.next(), {
+        'type': 'action_result',
+        'action': 'launch_app',
+        'success': true,
+      });
+      expect(injected.invocations, hasLength(1));
+      expect(injected.invocations.single.executable, '/usr/bin/example');
+      expect(injected.invocations.single.arguments, ['--test']);
+
+      for (final request in [
+        {'action': 'launch_app', 'payload': 'unknown-app'},
+        {'action': 'launch_app', 'payload': '/bin/sh'},
+        {'action': 'launch_app', 'payload': 'python3 -c print(1)'},
+        {'action': 'launch_app', 'payload': 'example --extra'},
+        {'action': 'launch_app', 'payload': 'https://example.test/'},
+        {'action': 'open_url', 'payload': '/usr/bin/example'},
+        {'action': 'open_url', 'payload': 'python3 -c print(1)'},
+      ]) {
+        session.socket.add(jsonEncode({'type': 'trigger_action', ...request}));
+        expect(await session.messages.next(), {
+          'type': 'action_error',
+          'action': request['action'],
+          'code': 'action_failed',
+        });
+        expect(injected.invocations, hasLength(1));
+      }
+
+      await session.messages.close();
+      await session.socket.close();
+    },
+  );
+
+  test('an empty approved registry denies a known-shaped identity', () async {
     if (!Platform.isLinux) return;
 
     final injected = _RecordingExecutor();
-    server = _newServer(commandExecutor: injected);
+    server = _newServer(
+      commandExecutor: injected,
+      applicationRegistry: ApprovedApplicationRegistry({}),
+    );
     final session = await _authenticatedSocket(server!);
 
     session.socket.add(
       jsonEncode({
         'type': 'trigger_action',
         'action': 'launch_app',
-        'payload': '/usr/bin/example --test',
+        'payload': 'example',
       }),
     );
     expect(await session.messages.next(), {
-      'type': 'action_result',
+      'type': 'action_error',
       'action': 'launch_app',
-      'success': true,
+      'code': 'action_failed',
     });
-    expect(injected.executables, ['/usr/bin/example']);
+    expect(injected.invocations, isEmpty);
 
     await session.messages.close();
     await session.socket.close();
@@ -141,12 +194,18 @@ Future<void> main() async {
 DartServerService _newServer({
   required CommandExecutor commandExecutor,
   CommandExecutor? launchCommandExecutor,
+  ApprovedApplicationRegistry? applicationRegistry,
   SensitiveActionPolicy sensitiveActionPolicy = const SensitiveActionPolicy(),
 }) => DartServerService.forTesting(
   port: 0,
   authSessionManager: AuthSessionManager(pairingCode: 'pairing-code'),
   commandExecutor: commandExecutor,
   launchCommandExecutor: launchCommandExecutor,
+  applicationRegistry:
+      applicationRegistry ??
+      ApprovedApplicationRegistry({
+        'example': LaunchCommand('/usr/bin/example', ['--test']),
+      }),
   sensitiveActionPolicy: sensitiveActionPolicy,
   configPath: '${Directory.systemTemp.path}/unused-deckboard-config.json',
   metricsInterval: const Duration(hours: 1),

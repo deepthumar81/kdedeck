@@ -18,6 +18,7 @@ let draggedItemIndex = null;
 let autoSave = true;
 let isDirty = false;
 let systemApps = [];
+let systemAppsLoaded = false;
 let configRevision = null;
 let configSaveBlocked = false;
 
@@ -170,6 +171,9 @@ function connectWebSocket() {
     ws.onclose = () => {
         isAuthenticated = false;
         authChallengeReceived = false;
+        systemApps = [];
+        systemAppsLoaded = false;
+        updateApprovedAppsHint();
         setConnectionStatus('Offline', 'status-offline');
         scheduleReconnect();
     };
@@ -269,16 +273,22 @@ function handleWebSocketMessage(event) {
             updateRecoveryControls();
             renderSidebar();
             renderGrid();
-            if (msg.type === 'init_state') requestSystemApps();
+            if (msg.type === 'init_state') {
+                systemApps = [];
+                systemAppsLoaded = false;
+                updateApprovedAppsHint();
+                requestSystemApps();
+            }
         } else if (msg.type === 'system_apps_list') {
-            systemApps = msg.apps || [];
+            systemApps = Array.isArray(msg.apps)
+                ? msg.apps.filter(app => app && app.approved === true && typeof app.payload === 'string' && typeof app.name === 'string')
+                : [];
+            systemAppsLoaded = true;
+            updateApprovedAppsHint();
             if (modal.classList.contains('show') && document.getElementById('edit-action').value === 'launch_app') {
-                // Re-evaluate the custom toggle if it's an existing button
-                const payloadStr = editPayloadCustom.value;
-                if (payloadStr) {
-                    customPayloadToggle.checked = !systemApps.some(app => app.payload === payloadStr);
+                if (appSearchResults.classList.contains('show')) {
+                    renderAppSearchDropdown(appSearchInput.value.toLowerCase());
                 }
-                updatePayloadVisibility();
             }
         }
     } catch(e) {
@@ -824,12 +834,13 @@ const iconGroup = document.getElementById('icon-group');
 const customSpanInputs = document.getElementById('custom-span-inputs');
 const actionSelect = document.getElementById('edit-action');
 
-const customPayloadToggle = document.getElementById('custom-payload-toggle');
 const appSearchContainer = document.getElementById('app-search-container');
 const editPayloadCustom = document.getElementById('edit-payload-custom');
 const appSearchInput = document.getElementById('app-search-input');
 const appSearchResults = document.getElementById('app-search-results');
 const editPayloadApp = document.getElementById('edit-payload-app');
+const approvedAppsHint = document.getElementById('approved-apps-hint');
+const launchAppError = document.getElementById('launch-app-error');
 
 let defaultDropX = null;
 let defaultDropY = null;
@@ -837,9 +848,27 @@ let defaultDropY = null;
 document.getElementById('add-btn').addEventListener('click', () => openEditor(null));
 document.getElementById('btn-cancel').addEventListener('click', () => modal.classList.remove('show'));
 
+function updateApprovedAppsHint() {
+    const visible = actionSelect.value === 'launch_app' && typeSelect.value === 'button';
+    approvedAppsHint.style.display = visible ? 'block' : 'none';
+    if (!visible) return;
+    approvedAppsHint.textContent = !systemAppsLoaded
+        ? 'Loading approved applications...'
+        : systemApps.length === 0
+            ? 'No approved applications are available. Configure the local server registry (KDEDECK_APPROVED_APPS) and reload the configurator.'
+            : 'Select an approved application from the list.';
+}
+
+function showLaunchAppError(message) {
+    launchAppError.textContent = message;
+    launchAppError.style.display = message ? 'block' : 'none';
+}
+
 function updatePayloadVisibility() {
     const type = typeSelect.value;
     const action = actionSelect.value;
+    showLaunchAppError('');
+    updateApprovedAppsHint();
     
     document.getElementById('edit-payload-media').style.display = 'none';
     document.getElementById('edit-payload-kde').style.display = 'none';
@@ -854,28 +883,21 @@ function updatePayloadVisibility() {
     } else {
         payloadGroup.style.display = 'block';
         if (action === 'launch_app') {
-            document.getElementById('custom-payload-toggle').parentElement.style.display = 'flex';
-            editPayloadCustom.placeholder = "e.g. flatpak run org.kde.discover";
-            if (customPayloadToggle.checked) {
-                appSearchContainer.style.display = 'none';
-                editPayloadCustom.style.display = 'block';
-            } else {
-                appSearchContainer.style.display = 'block';
-                editPayloadCustom.style.display = 'none';
-            }
+            // Launches are identity-only. The server resolves the selected
+            // approved identity to a fixed executable and argv template.
+            appSearchContainer.style.display = 'block';
+            editPayloadCustom.style.display = 'none';
+            appSearchInput.placeholder = 'Search approved applications...';
         } else if (action === 'mpris_action') {
-            document.getElementById('custom-payload-toggle').parentElement.style.display = 'none';
             appSearchContainer.style.display = 'none';
             editPayloadCustom.style.display = 'none';
             document.getElementById('edit-payload-media').style.display = 'block';
         } else if (action === 'kde_action') {
-            document.getElementById('custom-payload-toggle').parentElement.style.display = 'none';
             appSearchContainer.style.display = 'none';
             editPayloadCustom.style.display = 'none';
             document.getElementById('edit-payload-kde').style.display = 'block';
         } else {
             // For URLs or custom KDE actions, always show plain text box
-            document.getElementById('custom-payload-toggle').parentElement.style.display = 'none';
             appSearchContainer.style.display = 'none';
             editPayloadCustom.style.display = 'block';
             
@@ -889,13 +911,6 @@ function updatePayloadVisibility() {
 }
 
 actionSelect.addEventListener('change', updatePayloadVisibility);
-
-customPayloadToggle.addEventListener('change', () => {
-    if (customPayloadToggle.checked) {
-        editPayloadCustom.value = editPayloadApp.value;
-    }
-    updatePayloadVisibility();
-});
 
 // App Search Logic
 let currentSearchFocus = -1;
@@ -934,8 +949,9 @@ function renderAppSearchDropdown(query = '') {
         appSearchResults.classList.add('show');
     } else {
         const li = document.createElement('li');
+        li.className = 'app-search-empty';
         const message = createTextElement('div', '', '');
-        message.appendChild(createTextElement('div', 'app-name', systemApps.length === 0 ? 'Loading apps...' : 'No apps found'));
+        message.appendChild(createTextElement('div', 'app-name', !systemAppsLoaded ? 'Loading approved applications...' : systemApps.length === 0 ? 'No approved applications available' : 'No approved applications found'));
         li.appendChild(message);
         appSearchResults.appendChild(li);
         appSearchResults.classList.add('show');
@@ -980,7 +996,7 @@ appSearchInput.addEventListener('keydown', (e) => {
     if (!appSearchResults.classList.contains('show')) return;
     
     const items = appSearchResults.getElementsByTagName('li');
-    if (items.length === 0 || (items.length === 1 && systemApps.length === 0)) return; // Loading state
+    if (items.length === 0 || items[0].classList.contains('app-search-empty')) return;
     
     if (e.key === 'ArrowDown') {
         currentSearchFocus++;
@@ -1011,6 +1027,8 @@ function setActive(items) {
 }
 
 appSearchInput.addEventListener('input', () => {
+    editPayloadApp.value = '';
+    showLaunchAppError('');
     renderAppSearchDropdown(appSearchInput.value.toLowerCase());
 });
 
@@ -1069,6 +1087,7 @@ function openEditor(idx, dropX = null, dropY = null) {
     
     const form = document.getElementById('editor-form');
     form.reset();
+    showLaunchAppError('');
     customSpanInputs.style.display = 'none';
     spanSelect.disabled = false;
     
@@ -1097,14 +1116,6 @@ function openEditor(idx, dropX = null, dropY = null) {
             document.getElementById('edit-payload-media').value = payloadStr;
         } else if (item.action === 'kde_action') {
             document.getElementById('edit-payload-kde').value = payloadStr;
-        }
-        
-        // Only set to true if apps are loaded and it's genuinely not in the list.
-        // If systemApps is empty, default to false and let the onmessage handler fix it later.
-        if (systemApps.length > 0) {
-            customPayloadToggle.checked = !systemApps.some(app => app.payload === payloadStr);
-        } else {
-            customPayloadToggle.checked = false;
         }
         
         document.getElementById('edit-icon').value = item.icon || '';
@@ -1149,7 +1160,6 @@ function openEditor(idx, dropX = null, dropY = null) {
         typeSelect.value = 'button';
         spanSelect.value = '1x1';
         actionSelect.value = 'launch_app';
-        customPayloadToggle.checked = false;
         
         iconBase64Input.value = '';
         document.getElementById('edit-system-icon-path').value = '';
@@ -1177,7 +1187,13 @@ document.getElementById('editor-form').addEventListener('submit', (e) => {
 
     let payload = '';
     if (action === 'launch_app') {
-        payload = customPayloadToggle.checked ? editPayloadCustom.value : editPayloadApp.value;
+        payload = editPayloadApp.value;
+        if (!payload || !systemApps.some(app => app.payload === payload)) {
+            showLaunchAppError(systemAppsLoaded && systemApps.length > 0
+                ? 'Select an approved application from the list before saving.'
+                : 'No approved application is selected. Configure the local server registry (KDEDECK_APPROVED_APPS) and reload the configurator.');
+            return;
+        }
     } else if (action === 'mpris_action') {
         payload = document.getElementById('edit-payload-media').value;
     } else if (action === 'kde_action') {

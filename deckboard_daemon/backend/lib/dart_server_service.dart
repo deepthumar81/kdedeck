@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import 'approved_application_registry.dart';
 import 'app_discovery.dart';
 import 'auth_rate_limiter.dart';
 import 'auth_session_manager.dart';
@@ -96,6 +97,7 @@ class DartServerService {
       _clientIdentityResolver = _defaultClientIdentity,
       _configValidator = const ConfigValidator(),
       _environment = Platform.environment,
+      _applicationRegistry = ApprovedApplicationRegistry.fromEnvironment(),
       _commandExecutor = ProcessCommandExecutor.bounded(),
       _launchCommandExecutor = const ProcessCommandExecutor(),
       _sensitiveActionPolicy = const SensitiveActionPolicy(),
@@ -128,6 +130,7 @@ class DartServerService {
     ConfigLimits? configLimits,
     CommandExecutor? commandExecutor,
     CommandExecutor? launchCommandExecutor,
+    ApprovedApplicationRegistry? applicationRegistry,
     SensitiveActionPolicy sensitiveActionPolicy = const SensitiveActionPolicy(),
     Map<String, String> environment = const {},
     int maxConnections = defaultMaxConnections,
@@ -162,6 +165,13 @@ class DartServerService {
          limits: configLimits ?? const ConfigLimits(),
        ),
        _environment = Map<String, String>.of(environment),
+       _applicationRegistry =
+           applicationRegistry ??
+           // The isolated test constructor provides one harmless fixture
+           // identity by default; security tests can inject an empty registry.
+           ApprovedApplicationRegistry({
+             'example': LaunchCommand('/usr/bin/example', const []),
+           }),
        _commandExecutor = commandExecutor ?? ProcessCommandExecutor.bounded(),
        _launchCommandExecutor =
            launchCommandExecutor ??
@@ -222,6 +232,7 @@ class DartServerService {
   final String Function(HttpRequest request) _clientIdentityResolver;
   final ConfigValidator _configValidator;
   final Map<String, String> _environment;
+  final ApprovedApplicationRegistry _applicationRegistry;
   final CommandExecutor _commandExecutor;
   final CommandExecutor _launchCommandExecutor;
   SensitiveActionPolicy _sensitiveActionPolicy;
@@ -1291,6 +1302,7 @@ class DartServerService {
   }) async {
     final apps = await SystemActionsService.getInstalledApps(
       executor: _commandExecutor,
+      registry: _applicationRegistry,
     );
     if (!_isCurrentSocket(socket, generation)) return;
     if (!_requireCapability(
@@ -1339,8 +1351,13 @@ class DartServerService {
   }) async {
     switch (action) {
       case 'launch_app':
-      case 'open_url':
         return SystemActionsService.executeLaunch(
+          payload,
+          executor: _launchCommandExecutor,
+          registry: _applicationRegistry,
+        );
+      case 'open_url':
+        return SystemActionsService.executeOpenUrl(
           payload,
           executor: _launchCommandExecutor,
         );

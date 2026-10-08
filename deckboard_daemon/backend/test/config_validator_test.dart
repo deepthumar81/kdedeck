@@ -35,24 +35,15 @@ void main() {
   });
 
   test(
-    'accepts the checked-in config without dropping client fields',
+    'rejects the checked-in config until legacy launch commands are migrated',
     () async {
       final fixture = jsonDecode(
         await File('deckboard_config.json').readAsString(),
       );
       final result = const ConfigValidator().validate(fixture);
 
-      expect(result.isValid, isTrue, reason: result.errorCode);
-      expect(result.config, isNotNull);
-      final items = (result.config!['boards'] as List)
-          .expand((board) => (board as Map)['items'] as List)
-          .cast<Map>();
-      expect(items.any((item) => item['type'] == 'volume_slider'), isTrue);
-      expect(items.any((item) => item['action'] == 'launch_app'), isTrue);
-      expect(items.any((item) => item['action'] == 'open_url'), isTrue);
-      expect(items.any((item) => item['action'] == 'mpris_action'), isTrue);
-      expect(items.any((item) => item['system_icon_path'] != null), isTrue);
-      expect(items.any((item) => item['icon_base64'] != null), isTrue);
+      expect(result.isValid, isFalse);
+      expect(result.errorCode, 'unsafe_launch_payload');
     },
   );
 
@@ -157,6 +148,22 @@ void main() {
 
   test('rejects unknown or dangerous actions and payloads', () {
     expect(_validate(_config(action: 'run_shell')), isFalse);
+    expect(
+      _validate(_config(action: 'launch_app', payload: 'firefox')),
+      isTrue,
+    );
+    expect(
+      _validate(_config(action: 'launch_app', payload: '/usr/bin/firefox')),
+      isFalse,
+    );
+    expect(
+      _validate(_config(action: 'launch_app', payload: 'firefox --private')),
+      isFalse,
+    );
+    expect(
+      _validate(_config(action: 'launch_app', payload: 'python3')),
+      isFalse,
+    );
     expect(
       _validate(_config(action: 'launch_app', payload: 'foo; rm -rf /')),
       isFalse,

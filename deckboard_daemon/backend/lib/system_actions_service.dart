@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
+import 'approved_application_registry.dart';
 import 'app_discovery.dart';
 import 'command_executor.dart';
 
@@ -14,6 +17,8 @@ class SystemActionsService {
   /// The default executor can be replaced by an application-wide test fake.
   /// Prefer the per-call [executor] parameter when tests run concurrently.
   static CommandExecutor commandExecutor = const ProcessCommandExecutor();
+  static ApprovedApplicationRegistry applicationRegistry =
+      ApprovedApplicationRegistry.fromEnvironment();
   static String? _cachedDisplayOutput;
   static Map<String, String>? _iconCache;
 
@@ -103,7 +108,7 @@ class SystemActionsService {
     return 'eDP-1';
   }
 
-  static Future<bool> executeLaunch(
+  static Future<bool> executeOpenUrl(
     String payload, {
     CommandExecutor? executor,
   }) async {
@@ -134,29 +139,35 @@ class SystemActionsService {
         return false;
       }
 
-      final launch = DesktopEntryParser.parseExec(payload);
-      if (launch == null) return false;
-
-      if (Platform.isLinux) {
-        final result = await commandExecutor.run(
-          launch.executable,
-          launch.arguments,
-          environment: {'DISPLAY': ':0'},
-        );
-        return result.exitCode == 0;
-      } else if (Platform.isWindows || Platform.isMacOS) {
-        // Keep the platform branches explicit while using the same argv-safe
-        // path. Do not reintroduce cmd.exe or a shell as a fallback.
-        final result = await commandExecutor.run(
-          launch.executable,
-          launch.arguments,
-        );
-        return result.exitCode == 0;
-      }
+      return false;
     } catch (_) {
       return false;
     }
-    return false;
+  }
+
+  /// Launches only a server-approved identity. The request never supplies an
+  /// executable or arguments, so an authenticated client cannot turn this into
+  /// an arbitrary process or interpreter invocation.
+  static Future<bool> executeLaunch(
+    String identity, {
+    CommandExecutor? executor,
+    ApprovedApplicationRegistry? registry,
+  }) async {
+    if (!ApprovedApplicationRegistry.isValidIdentity(identity)) return false;
+    final launch = (registry ?? applicationRegistry).resolve(identity);
+    if (launch == null) return false;
+
+    final commandExecutor = executor ?? SystemActionsService.commandExecutor;
+    try {
+      final result = await commandExecutor.run(
+        launch.executable,
+        launch.arguments,
+        environment: Platform.isLinux ? {'DISPLAY': ':0'} : null,
+      );
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<bool> setVolume(int volume, {CommandExecutor? executor}) async {
@@ -392,8 +403,10 @@ class SystemActionsService {
 
   static Future<List<Map<String, dynamic>>> getInstalledApps({
     CommandExecutor? executor,
+    ApprovedApplicationRegistry? registry,
   }) async {
     final commandExecutor = executor ?? SystemActionsService.commandExecutor;
+    final approved = registry ?? applicationRegistry;
     final apps = <Map<String, dynamic>>[];
     Set<String> allIconNames = {};
     if (Platform.isLinux) {
@@ -416,21 +429,14 @@ class SystemActionsService {
                 );
                 if (entry == null) continue;
 
-                // Preserve the existing launch payload contract. The
-                // parser retains the desktop Exec template so callers can
-                // choose how to expand field codes; this backend has
-                // historically removed them before returning the payload.
-                final payload = entry.exec.split('%').first.trim();
+                final identity = p.basenameWithoutExtension(entity.path);
+                if (!approved.contains(identity)) continue;
                 final app = <String, dynamic>{
                   'name': entry.name,
-                  'payload': payload,
+                  'payload': identity,
                   'icon': entry.icon ?? 'apps',
+                  'approved': true,
                 };
-                final launch = DesktopEntryParser.parseExec(entry.exec);
-                if (launch != null) {
-                  app['executable'] = launch.executable;
-                  app['arguments'] = launch.arguments;
-                }
                 apps.add(app);
                 if (entry.icon != null && entry.icon!.isNotEmpty) {
                   allIconNames.add(entry.icon!);
@@ -451,12 +457,13 @@ class SystemActionsService {
           for (int i = 1; i < lines.length; i++) {
             final parts = lines[i].split(RegExp(r'\s+'));
             if (parts.isNotEmpty && parts[0].isNotEmpty) {
+              final identity = 'snap:${parts[0]}';
+              if (!approved.contains(identity)) continue;
               apps.add({
                 'name': parts[0],
-                'payload': 'snap run ${parts[0]}',
+                'payload': identity,
                 'icon': 'apps',
-                'executable': 'snap',
-                'arguments': ['run', parts[0]],
+                'approved': true,
               });
             }
           }
@@ -468,7 +475,7 @@ class SystemActionsService {
       // TODO: macOS /Applications apps
     }
 
-    // Sort and remove exact duplicates by payload
+    // Sort and remove exact duplicates by approved identity.
     apps.sort((a, b) => a['name']!.compareTo(b['name']!));
     final seen = <String>{};
     apps.retainWhere((app) => seen.add(app['payload']!));

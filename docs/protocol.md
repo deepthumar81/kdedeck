@@ -255,7 +255,7 @@ Current action names and payloads:
 
 | Action | Payload/value | Standalone daemon | Embedded Flutter server |
 |---|---|---|---|
-| `launch_app` | shell/command string | `SystemActionsService.executeLaunch` | Linux `LinuxActionsService.executeLaunch` only |
+| `launch_app` | approved application identity | server-owned executable and fixed argv only | Linux `LinuxActionsService.executeLaunch` only |
 | `open_url` | `http://` or `https://` URL | `xdg-open`; Windows `cmd`; macOS `open` | Linux implementation only due to server gate |
 | `audio_volume` | numeric `value`, clamped 0-100 | `pactl`, then `amixer` | Linux `pactl`, then `amixer` |
 | `audio_mute_toggle` | none | `pactl`, then `amixer` | Linux `pactl`, then `amixer` |
@@ -272,6 +272,15 @@ The standalone dispatch is
 The embedded dispatch refuses all actions when `Platform.isLinux` is false and
 is therefore not a Windows/macOS system-control implementation
 ([`services/dart_server_service.dart`](../kdedeck_mobile/lib/services/dart_server_service.dart#L171-L231)).
+
+For the standalone daemon, `launch_app` payloads are opaque approved identities,
+not executable strings. The server resolves them through the local
+`KDEDECK_APPROVED_APPS` registry, a bounded JSON object such as
+`{"org.kde.kate":{"executable":"/usr/bin/kate","arguments":[]}}`.
+The executable and arguments are never accepted from the WebSocket request.
+Unknown identities and shell/interpreter launch definitions fail closed. If the
+variable is unset, no application launch identity is approved. The web
+configurator lists only identities present in that registry.
 
 ### `save_config`
 

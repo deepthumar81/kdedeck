@@ -156,21 +156,20 @@
                 
                 <div class="form-group" id="payload-group">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                        <label style="margin-bottom: 0;">Payload (App / URL)</label>
-                        <label style="font-size: 0.8rem; display: flex; align-items: center; gap: 5px;">
-                            <input type="checkbox" id="custom-payload-toggle"> Custom Command/URL
-                        </label>
+                        <label style="margin-bottom: 0;">Payload (Approved App / URL)</label>
                     </div>
                     
                     <!-- Searchable Dropdown for System Apps -->
                     <div id="app-search-container" class="dropdown-container">
-                        <input type="text" id="app-search-input" placeholder="Search installed apps (e.g. discover)..." autocomplete="off">
+                        <input type="text" id="app-search-input" placeholder="Search approved applications..." autocomplete="off">
                         <ul id="app-search-results" class="dropdown-list"></ul>
                         <input type="hidden" id="edit-payload-app">
                     </div>
+                    <p id="approved-apps-hint" role="status" style="display: none;"></p>
+                    <p id="launch-app-error" role="alert" style="display: none;"></p>
 
                     <!-- Custom Payload Textbox -->
-                    <input type="text" id="edit-payload-custom" style="display: none;" placeholder="e.g. flatpak run org.kde.discover">
+                    <input type="text" id="edit-payload-custom" style="display: none;" placeholder="https://example.com">
                     
                     <!-- Predefined Dropdowns for Media / KDE -->
                     <select id="edit-payload-media" style="display: none;">

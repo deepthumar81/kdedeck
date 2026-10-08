@@ -1963,6 +1963,42 @@ Make the existing Flutter widget smoke test construct the app with the same
 This fixes only the provider setup in the smoke test. Flutter pairing/auth/WSS,
 secure token storage, expiry/reconnect UI, and device QA remain pending.
 
+## Step 50 — Restrict standalone application launches to approved identities
+
+### Goal
+
+Prevent an authenticated WebSocket client or saved configuration from selecting
+an arbitrary executable, shell, interpreter, or wrapper process.
+
+### Changes
+
+- Added a bounded, immutable local `ApprovedApplicationRegistry` backed by the
+  `KDEDECK_APPROVED_APPS` JSON environment setting.
+- Changed standalone `launch_app` payloads from command strings to opaque
+  application identities resolved to server-owned executable and fixed argv.
+- Split `open_url` from application launch execution so URL handling cannot be
+  confused with identity resolution.
+- Made app discovery list only locally approved identities; discovery does not
+  approve an application by itself.
+- Rejected legacy command-shaped launch payloads in config validation and added
+  authenticated integration coverage for unknown, shell, interpreter, extra-arg,
+  and executable-shaped requests.
+- Updated the web configurator to require selecting an approved application and
+  to explain how to configure an empty local registry.
+
+### Verification
+
+- Approved registry tests: **7 passed**.
+- Focused launch/config/command-limit tests: required.
+- Full backend suite and analysis: required.
+
+### Scope boundary
+
+The embedded Flutter server still has a separate launch path. Legacy checked-in
+command-string configuration requires explicit migration before it can be used
+with the hardened standalone validator. Process-tree ownership and local admin
+UI for editing the registry remain pending.
+
 ## Step 49 — Harden web configurator recovery
 
 ### Goal

@@ -149,7 +149,7 @@ void main() {
       jsonEncode({
         'type': 'trigger_action',
         'action': 'launch_app',
-        'payload': '/usr/bin/example',
+        'payload': 'example',
       }),
     );
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -231,7 +231,7 @@ void main() {
       _oversizedJsonFrame({
         'type': 'trigger_action',
         'action': 'launch_app',
-        'payload': '/usr/bin/example',
+        'payload': 'example',
       }, 64),
     );
     expect(await messages.next(), {
@@ -357,7 +357,7 @@ void main() {
         jsonEncode({
           'type': 'trigger_action',
           'action': 'launch_app',
-          'payload': '/usr/bin/example',
+          'payload': 'example',
         }),
       );
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -392,7 +392,7 @@ void main() {
     final action = jsonEncode({
       'type': 'trigger_action',
       'action': 'launch_app',
-      'payload': '/usr/bin/example',
+      'payload': 'example',
     });
     client.add(action);
     client.add(action);
@@ -431,7 +431,7 @@ void main() {
     final action = jsonEncode({
       'type': 'trigger_action',
       'action': 'launch_app',
-      'payload': '/usr/bin/example',
+      'payload': 'example',
     });
     client.add(action);
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -501,7 +501,7 @@ void main() {
     final action = jsonEncode({
       'type': 'trigger_action',
       'action': 'launch_app',
-      'payload': '/usr/bin/example',
+      'payload': 'example',
     });
     client.add(action);
     expect((await messages.next())['code'], 'authentication_required');
@@ -1082,7 +1082,7 @@ void main() {
         jsonEncode({
           'type': 'trigger_action',
           'action': 'launch_app',
-          'payload': '/usr/bin/example',
+          'payload': 'example',
         }),
       );
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1251,7 +1251,7 @@ void main() {
       jsonEncode({
         'type': 'trigger_action',
         'action': 'launch_app',
-        'payload': '/usr/bin/example',
+        'payload': 'example',
       }),
     );
     expect(await controlMessages.next(), {
