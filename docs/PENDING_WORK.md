@@ -84,9 +84,13 @@ security or UI/platform parity.
 - [x] Reject explicitly unsupported protocol versions before standalone
   authentication consumes credentials (Step 43); omitted versions remain
   backward-compatible.
-- [ ] Converge embedded Flutter server with shared auth/validation/TLS policy;
-  complete cross-server/client compatibility enforcement and server
-  lifecycle/tray path reliability.
+- [ ] Complete embedded Flutter server convergence with shared TLS, validation,
+  client authentication, compatibility enforcement, and lifecycle/tray
+  reliability.
+- [x] Add an embedded-server authentication boundary before remote state/actions,
+  bounded protocol-v1 auth errors, token expiry/revocation checks, and focused
+  WebSocket coverage (Step 52); plain embedded transport and client onboarding
+  remain pending.
 
 ## Clients, UX, platforms, releases
 

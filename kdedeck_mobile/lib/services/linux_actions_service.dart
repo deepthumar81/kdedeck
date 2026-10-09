@@ -9,7 +9,8 @@ class LinuxActionsService {
   static Future<String> _getDisplayOutput() async {
     if (_cachedDisplayOutput != null) return _cachedDisplayOutput!;
     try {
-      final res = await Process.run('xrandr', ['--query'], environment: {'DISPLAY': ':0'});
+      final res = await Process.run('xrandr', ['--query'],
+          environment: {'DISPLAY': ':0'});
       if (res.exitCode == 0) {
         for (var line in (res.stdout as String).split('\n')) {
           if (line.contains(' connected')) {
@@ -23,16 +24,21 @@ class LinuxActionsService {
   }
 
   /// Launch application executable or open URL
-  static Future<void> executeLaunch(String payload) async {
-    if (!Platform.isLinux || payload.isEmpty) return;
+  static Future<bool> executeLaunch(String payload) async {
+    if (!Platform.isLinux || payload.isEmpty) return false;
     try {
       if (payload.startsWith('http://') || payload.startsWith('https://')) {
-        await Process.run('xdg-open', [payload], environment: {'DISPLAY': ':0'});
+        final result = await Process.run('xdg-open', [payload],
+            environment: {'DISPLAY': ':0'});
+        return result.exitCode == 0;
       } else {
-        await Process.run('sh', ['-c', payload], environment: {'DISPLAY': ':0'});
+        final result = await Process.run('sh', ['-c', payload],
+            environment: {'DISPLAY': ':0'});
+        return result.exitCode == 0;
       }
     } catch (e) {
-      debugPrint("❌ [LinuxActionsService] Launch error: $e");
+      debugPrint('[LinuxActionsService] Launch error');
+      return false;
     }
   }
 
@@ -41,12 +47,14 @@ class LinuxActionsService {
     if (!Platform.isLinux) return false;
     final vol = volume.clamp(0, 100);
     try {
-      final res = await Process.run('pactl', ['set-sink-volume', '@DEFAULT_SINK@', '$vol%']);
+      final res = await Process.run(
+          'pactl', ['set-sink-volume', '@DEFAULT_SINK@', '$vol%']);
       if (res.exitCode == 0) return true;
     } catch (_) {}
 
     try {
-      final res = await Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', '$vol%']);
+      final res = await Process.run(
+          'amixer', ['-D', 'pulse', 'sset', 'Master', '$vol%']);
       return res.exitCode == 0;
     } catch (_) {}
     return false;
@@ -56,12 +64,14 @@ class LinuxActionsService {
   static Future<bool> toggleMute() async {
     if (!Platform.isLinux) return false;
     try {
-      final res = await Process.run('pactl', ['set-sink-mute', '@DEFAULT_SINK@', 'toggle']);
+      final res = await Process.run(
+          'pactl', ['set-sink-mute', '@DEFAULT_SINK@', 'toggle']);
       if (res.exitCode == 0) return true;
     } catch (_) {}
 
     try {
-      final res = await Process.run('amixer', ['-D', 'pulse', 'sset', 'Master', 'toggle']);
+      final res = await Process.run(
+          'amixer', ['-D', 'pulse', 'sset', 'Master', 'toggle']);
       return res.exitCode == 0;
     } catch (_) {}
     return false;
@@ -100,22 +110,27 @@ class LinuxActionsService {
     try {
       final display = await _getDisplayOutput();
       final brightVal = (b / 100.0).toStringAsFixed(2);
-      final res = await Process.run('xrandr', ['--output', display, '--brightness', brightVal], environment: {'DISPLAY': ':0'});
+      final res = await Process.run(
+          'xrandr', ['--output', display, '--brightness', brightVal],
+          environment: {'DISPLAY': ':0'});
       return res.exitCode == 0;
     } catch (e) {
-      debugPrint("❌ [LinuxActionsService] Brightness xrandr fallback failed: $e");
+      debugPrint(
+          "❌ [LinuxActionsService] Brightness xrandr fallback failed: $e");
     }
 
     return false;
   }
 
   /// MPRIS Media Control (play-pause, next, previous)
-  static Future<void> executeMpris(String payload) async {
-    if (!Platform.isLinux || payload.isEmpty) return;
+  static Future<bool> executeMpris(String payload) async {
+    if (!Platform.isLinux || payload.isEmpty) return false;
     try {
-      await Process.run('playerctl', [payload]);
+      final result = await Process.run('playerctl', [payload]);
+      return result.exitCode == 0;
     } catch (e) {
-      debugPrint("❌ [LinuxActionsService] MPRIS error: $e");
+      debugPrint('[LinuxActionsService] MPRIS error');
+      return false;
     }
   }
 }

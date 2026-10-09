@@ -2048,6 +2048,44 @@ embedded Flutter server.
   used by the browser configurator.
 - `git diff --check`: required.
 
+## Step 52 — Add an authenticated embedded-server boundary
+
+### Goal
+
+Prevent the Flutter-hosted embedded server from exposing configuration/state or
+executing actions to unauthenticated remote WebSocket clients, while keeping
+loopback desktop operation available.
+
+### Changes
+
+- Added `auth_required` as the first embedded WebSocket frame for remote peers.
+- Added protocol-v1 token authentication with bounded failures, constant-time
+  token comparison, session expiry, and live credential revocation checks.
+- Added a locally persisted high-entropy pairing credential source with an
+  explicit `DART_SERVER_PAIRING_TOKEN` override; credentials are not logged or
+  echoed in responses.
+- Rejected unauthenticated actions and config writes with bounded protocol
+  errors, and added success/error responses compatible with the standalone
+  action result shape.
+- Added injectable token, clock, bind, and trust seams plus focused tests for
+  auth ordering, rejection, expiry/revocation, rate limiting, and disclosure.
+- Kept the embedded server implementation separate from the standalone daemon.
+
+### Verification
+
+- `flutter test`: **PASS**.
+- `dart format --set-exit-if-changed ...`: **PASS**.
+- `flutter analyze`: **exit 0**; existing project warnings/informational lints
+  remain, primarily deprecated UI APIs and unused imports.
+
+### Scope boundary
+
+The embedded server remains plain HTTP/WS and does not yet provide TLS or a
+verified certificate/fingerprint workflow. The Flutter client has not yet been
+updated to perform pairing/token authentication or secure credential storage.
+The embedded Linux launch path still needs the standalone approved-identity
+policy and bounded subprocess controls.
+
 ### Scope boundary
 
 Browser end-to-end coverage, Flutter WSS/secure device credential storage,
