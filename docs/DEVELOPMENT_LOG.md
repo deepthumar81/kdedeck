@@ -2091,3 +2091,55 @@ policy and bounded subprocess controls.
 Browser end-to-end coverage, Flutter WSS/secure device credential storage,
 certificate trust UX, and backend application-execution authorization remain
 pending.
+
+## Step 53 — Flutter pairing, secure reconnects, and configuration recovery
+
+### Goal
+
+Connect the phone to the standalone authenticated protocol using a real pairing
+UI, securely retain the issued bearer for reconnects, and prevent plaintext LAN
+credentials or stale configuration writes.
+
+### Changes
+
+- Added `CredentialStore` backed by `flutter_secure_storage`, with injectable
+  fakes for tests and scheme/host/port-scoped keys. Removed legacy preference
+  credentials without reuse; old devices must re-pair.
+- Implemented minimal standalone challenges/successes as well as embedded-v1
+  token messages. One-time codes use `pairing_code`; only the issued bearer is
+  stored. Unsupported explicit versions fail closed.
+- Enforced WSS for LAN/DNS endpoints, with numeric plaintext loopback as the
+  only local exception. Normal certificate validation remains enabled.
+- Fenced endpoint switches, disconnects, asynchronous storage, and stale frames;
+  bounded readiness deadlines, queued frames and frame bytes.
+- Gated actions on authenticated initial state, added revision-aware serialized
+  saves, and preserved rejected/offline/conflicting drafts until explicit recovery.
+- Added obscured pairing/token fields, WSS profile selection, bounded errors,
+  re-pair and confirmed draft-discard controls to the phone screen. Icons follow
+  the chosen HTTP/HTTPS transport.
+- Registered secure storage on Linux and disabled Android backup to avoid
+  restoring encrypted credential data without the original keystore keys.
+
+### Verification
+
+- `flutter test`: **49 tests passed** (service, widget, embedded and real socket
+  transport coverage).
+- `flutter build apk --debug`: **PASS**; existing plugin KGP warnings remain.
+- Real default connector tests verify pairing, bearer reconnect, revision saves,
+  and rejection of untrusted WSS before any credential lookup or HTTP upgrade.
+- Service/storage/test formatting: **PASS**.
+- `flutter build linux --debug`: **BLOCKED**, host lacks `libsecret-1>=0.18.4`.
+  No host packages were installed; install the platform development dependency
+  and rerun before distributing a Linux build.
+- Focused `flutter analyze` on service/storage/new tests: **no issues**.
+- Full `flutter analyze`: **no errors**, 93 warnings/informational diagnostics
+  remain in existing main/UI code; this is not a clean full lint result.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+Physical Android/iOS/Linux key-store, trust, rotation, expiry, and upgrade QA
+remain pending. The app does not provision certificate trust or implement a
+fingerprint acceptance UI. The embedded server remains plaintext and remote
+embedded use is deliberately blocked until its TLS policy converges. Standalone
+production persistence is unchanged; no commits or pushes were made by the agent.

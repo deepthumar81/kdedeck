@@ -94,8 +94,12 @@ security or UI/platform parity.
 
 ## Clients, UX, platforms, releases
 
-- [ ] Flutter pairing/auth/WSS, secure token storage, expiry/reconnect/re-pair UI;
-  record device QA.
+- [ ] Verify Flutter pairing/auth/WSS, secure storage, expiry/reconnect/re-pair
+  flows on physical devices; provision certificate trust and record device QA.
+- [x] Implement the Flutter client pairing/token exchange, endpoint-scoped secure
+  storage, WSS-only LAN policy, reconnect fencing, revision-aware saves, and phone
+  pairing/recovery UI with automated service/widget/transport tests (Step 53).
+  Physical device and certificate trust provisioning QA remain pending above.
 - [x] Fix the provider-less Flutter widget smoke test by matching the production
   `WebSocketService` provider boundary (Step 48).
 - [ ] Complete browser end-to-end tests for authenticated error/capacity/

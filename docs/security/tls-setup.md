@@ -32,6 +32,34 @@ trusted local channel before provisioning trust. Do not globally disable TLS
 validation or accept every certificate. TLS encrypts transport; pairing and
 authorization are still necessary.
 
+## Flutter client connection
+
+In the phone app, add a PC using its certificate hostname/IP and port. New remote
+profiles default to **Secure connection (WSS / HTTPS)**. Certificate trust and
+hostname checks are performed by the platform; there is no accept-any-certificate
+option or downgrade to plaintext. A self-signed certificate without provisioned
+trust will show a connection failure **before any pairing code/token is sent**.
+An in-app fingerprint/trust provisioning workflow is not implemented yet.
+
+Start the standalone daemon with `--pair` in its local interactive terminal, then
+enter that one-time code in the app's **Pair with code** field. Successful pairing
+stores only the issued bearer token using platform secure storage. Use
+**Forget credential & re-pair** in the drawer to discard the saved credential.
+Tokens are isolated by scheme, host and port; switching endpoints cannot send
+the previous endpoint's credential. Android app backup is disabled to avoid
+restoring encrypted credential data without its original keystore keys.
+
+On Linux the new secure-storage plugin requires the platform secret service and
+libsecret development/runtime packages for building/running the desktop app.
+If secure storage is unavailable, authentication fails visibly; preferences are
+not used as an insecure fallback. Device keystore/keychain/secret-service
+behaviour across upgrades still requires physical-device QA.
+
+The embedded Flutter server remains plaintext. **Do not** send its token over a
+LAN: the client now blocks this route until embedded TLS is implemented. Plain
+WS remains available only for numeric loopback (`127.x.x.x` or `::1`), not a DNS
+alias such as `localhost`.
+
 ## Verification completed
 
 Automated tests generate disposable certificate/key fixtures outside the repo:
@@ -49,7 +77,7 @@ Tests require OpenSSL on the test host; production uses Dart's TLS implementatio
 ## Required follow-ups
 
 - User-friendly certificate provisioning and verified server-identity workflow.
-- Flutter WSS connections, secure credential storage, and trusted certificate handling.
+- Verified trust/fingerprint provisioning and device keystore upgrade testing.
 - Physical Android/Linux LAN pairing and icon/editor end-to-end tests.
 - Certificate expiry/rotation UX and hostname/expiry rejection fixtures.
 - Embedded Flutter server transport policy convergence.

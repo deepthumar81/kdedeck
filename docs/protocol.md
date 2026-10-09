@@ -5,8 +5,9 @@ This is the protocol actually implemented by the standalone Dart server on
 authentication, `init_state` includes additive protocol metadata advertising a
 stable version and bounded capability list. The standalone server requires
 authentication before sending state or handling control/configuration requests.
-The Flutter embedded server remains a separate implementation and is not
-changed by this step.
+The Flutter embedded server remains a separate implementation with its own
+token-authentication boundary. It has not yet converged with standalone TLS,
+approval policies, or configuration validation.
 
 ## Transport and endpoints
 
@@ -54,9 +55,10 @@ Loopback remains HTTP/WS when neither TLS variable is set, or HTTPS/WSS when
 both valid variables are supplied. Invalid explicit TLS never downgrades even
 on loopback. Certificate paths are not board settings and are not sent to clients.
 
-See [TLS setup](security/tls-setup.md). Certificate provisioning and client trust
-on real devices are still required; Flutter currently only supports its legacy
-plain WebSocket flow and needs a separate WSS/trust implementation.
+See [TLS setup](security/tls-setup.md). The Flutter client now uses WSS for LAN
+endpoints with platform certificate validation and no insecure fallback. Plain
+WS is allowed only for numeric loopback addresses. Provisioning and verified
+trust on real devices, including a fingerprint approval UI, remain required.
 
 ## Connection lifecycle
 
@@ -136,6 +138,19 @@ bounded response without echoing credentials or request payloads:
 ```json
 { "type": "auth_error", "code": "invalid_credentials" }
 ```
+
+The Flutter phone UI now accepts the standalone one-time code and exchanges it
+for the returned bearer token, stored with `flutter_secure_storage` under a
+scheme/host/port-specific key. Reconnects wait for the challenge before sending
+the bearer. A pairing code is never saved as a bearer or in preferences. Legacy
+plaintext preference credentials are removed without reuse, so existing devices
+must re-pair. Versionless auth challenges/successes are supported; an explicitly
+unsupported version is rejected. Actions wait for authenticated `init_state`.
+
+Embedded servers use a separate reusable local token and still lack TLS. The
+phone client therefore refuses remote embedded plaintext connections; embedded
+LAN usage must wait for TLS convergence rather than weakening the client policy.
+Numeric plaintext loopback retains the embedded trusted-local flow.
 
 The standalone daemon also limits failed `authenticate` frames per WebSocket
 peer address. The default policy accepts five failed attempts, then returns
@@ -324,6 +339,11 @@ non-negative integer matching the latest revision advertised by `init_state` or
 configuration. Invalid supplied revisions receive `invalid_revision`. Revisions
 are in-memory process-lifetime guards and are not written into user config
 files, so a restarted daemon starts at revision `0`.
+
+Flutter includes the observed revision on saves and serializes pending saves.
+Rejected/offline drafts are retained. Conflicts block further saves until an
+explicit resolution; the phone UI confirms before discarding and reconnecting
+for fresh server state. It does not blindly retry without a known remote snapshot.
 
 The validator also bounds board/item counts, IDs, titles, payloads, icon data,
 nesting, and serialized size; rejects non-finite/fractional values, malformed

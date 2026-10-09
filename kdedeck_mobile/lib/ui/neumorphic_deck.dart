@@ -1,11 +1,26 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dynamic_matrix_grid.dart';
 import 'package:provider/provider.dart';
 import '../services/websocket_service.dart';
+
+Uri? _httpEndpoint(WebSocketService ws) {
+  try {
+    final uri = ws.serverUri;
+    return uri.replace(scheme: uri.scheme == 'wss' ? 'https' : 'http', path: '', query: null);
+  } catch (_) {
+    return null;
+  }
+}
+
+@visibleForTesting
+Uri? systemIconUri(WebSocketService ws, String path) => _httpEndpoint(ws)?.replace(
+      path: '/system_icons', queryParameters: {'path': path},
+    );
 
 class NeumorphicDeckScreen extends StatefulWidget {
   const NeumorphicDeckScreen({super.key});
@@ -18,6 +33,10 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
   final PageController _pageController = PageController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _activePageIndex = 0;
+  final _pairingCodeController = TextEditingController();
+  final _embeddedTokenController = TextEditingController();
+  bool _showEmbeddedToken = false;
+  bool _conflictDialogShown = false;
 
   bool _isDarkMode = true;
 
@@ -28,17 +47,92 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
   Color get textPrimary => _isDarkMode ? Colors.white70 : const Color(0xFF0F172A);
 
   @override
+  void dispose() {
+    _sliderDebounceTimer?.cancel();
+    _pairingCodeController.dispose();
+    _embeddedTokenController.dispose();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  String? _connectionError(String? code) {
+    switch (code) {
+      case null:
+        return null;
+      case 'invalid_credentials':
+      case 'invalid_token':
+      case 'invalid_code':
+      case 'pairing_rejected':
+      case 'revoked':
+      case 'session_revoked':
+      case 'token_revoked':
+        return 'Pairing rejected. Check the code and try again.';
+      case 'expired':
+      case 'session_expired':
+      case 'token_expired':
+      case 'expired_code':
+      case 'pairing_expired':
+        return 'Pairing code expired. Request a new code on your PC.';
+      case 'tls_required':
+        return 'This PC requires a secure WSS connection.';
+      case 'invalid_endpoint':
+        return 'Check the PC address and port.';
+      case 'rate_limited':
+        return 'Too many attempts. Please wait before trying again.';
+      case 'credential_unavailable':
+        return 'Could not save the credential securely. Please try again.';
+       case 'unsupported_protocol':
+       case 'unsupported_protocol_version':
+         return 'This PC uses an unsupported pairing protocol.';
+       case 'connection_failed':
+         return 'Connection failed. Check the address, PC server and certificate trust.';
+      default:
+        return 'Unable to pair. Check the PC and try again.';
+    }
+  }
+
+  void _showConfigConflict(WebSocketService ws) {
+    if (!ws.configConflict) {
+      _conflictDialogShown = false;
+      return;
+    }
+    if (_conflictDialogShown) return;
+    _conflictDialogShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !ws.configConflict) return;
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Configuration conflict'),
+          content: const Text('The PC configuration changed while you were editing. Your local draft is still here. Discard your draft and load the PC version?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Keep local draft')),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                ws.reloadServerConfig();
+              },
+              child: const Text('Discard draft & reload'),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final ws = Provider.of<WebSocketService>(context);
     final config = ws.configData;
     final boards = config?['boards'] as List<dynamic>? ?? [];
+    _showConfigConflict(ws);
 
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: bgColor,
       drawer: _buildNeumorphicDrawer(context, ws),
       body: SafeArea(
-        child: boards.isEmpty
+         child: !ws.isConnected || !ws.authenticated || ws.authRequired || boards.isEmpty
             ? _buildConnectingState(ws)
             : PageView.builder(
                 controller: _pageController,
@@ -104,12 +198,14 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                 getSpanRows: (idx) => (items[idx]['span_rows'] as num? ?? 1).toInt(),
                 getGridX: (idx) => items[idx]['grid_x'] as int?,
                 getGridY: (idx) => items[idx]['grid_y'] as int?,
-                isDraggable: ws.enableDragDrop,
+                 isDraggable: ws.enableDragDrop && !ws.configConflict,
                 itemBuilder: (context, idx, spanCols, spanRows) {
                   return _buildNeumorphicTile(ws, items[idx], spanCols, spanRows);
                 },
                 emptyBuilder: (context) => _buildEmptyNeumorphicSlot(),
-                onDrop: (draggedIdx, targetCol, targetRow) => _handleItemDroppedMobile(ws, board, draggedIdx, targetCol, targetRow),
+                 onDrop: (draggedIdx, targetCol, targetRow) {
+                   if (!ws.configConflict) _handleItemDroppedMobile(ws, board, draggedIdx, targetCol, targetRow);
+                 },
               ),
             ),
           ),
@@ -161,6 +257,13 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
             _buildMicroGauge("G", "${ws.metrics['gpu_temp']}°", const Color(0xFFF59E0B)),
             _buildMicroGauge("R", "${ws.metrics['ram_percent']}%", const Color(0xFF3B82F6)),
           ],
+
+          if (ws.configConflict)
+            IconButton(
+              tooltip: 'Review configuration conflict',
+              icon: const Icon(Icons.warning_amber_rounded, color: Color(0xFFF59E0B)),
+              onPressed: () => setState(() => _conflictDialogShown = false),
+            ),
 
           // Live Connection LED Status Dot & Page Dots
           Column(
@@ -394,7 +497,10 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
         graphic = Icon(_getIconData(item['icon']), size: isMultiSpan ? 28 : 20, color: accentBlue);
       }
     } else if (item['system_icon_path'] != null) {
-      final url = "http://${ws.serverIp}:${ws.serverPort}/system_icons?path=${Uri.encodeComponent(item['system_icon_path'])}";
+       final url = systemIconUri(ws, item['system_icon_path'].toString());
+       if (url == null) {
+         return Icon(Icons.broken_image, color: accentBlue);
+       }
       final isSvg = item['system_icon_path'].toString().toLowerCase().endsWith('.svg');
       
       graphic = FractionallySizedBox(
@@ -403,8 +509,8 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16.0),
           child: isSvg 
-              ? SvgPicture.network(url, fit: BoxFit.contain, placeholderBuilder: (_) => Icon(Icons.downloading, color: accentBlue))
-              : Image.network(url, fit: BoxFit.contain, errorBuilder: (_,__,___) => Icon(Icons.broken_image, color: accentBlue)),
+               ? SvgPicture.network(url.toString(), fit: BoxFit.contain, placeholderBuilder: (_) => Icon(Icons.downloading, color: accentBlue))
+               : Image.network(url.toString(), fit: BoxFit.contain, errorBuilder: (_,__,___) => Icon(Icons.broken_image, color: accentBlue)),
         ),
       );
     } else {
@@ -485,13 +591,76 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                 style: TextStyle(color: textPrimary, fontWeight: FontWeight.w900, fontSize: 18),
               ),
               const SizedBox(height: 4),
-              Text(
-                "Connecting to ${ws.activeServerName} (${ws.serverIp})...",
+               Text(
+                 ws.authRequired && !ws.authenticated
+                     ? 'Pair with ${ws.activeServerName} (${_httpEndpoint(ws) ?? 'invalid address'})'
+                     : 'Connecting to ${ws.activeServerName} (${_httpEndpoint(ws) ?? 'invalid address'})...',
                 style: TextStyle(color: textPrimary.withOpacity(0.6), fontSize: 12),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              CircularProgressIndicator(color: accentBlue, strokeWidth: 3),
+               if (!ws.authRequired || ws.status == 'authenticating')
+                 CircularProgressIndicator(color: accentBlue, strokeWidth: 3),
+               if (ws.authRequired && !ws.authenticated) ...[
+                 const SizedBox(height: 12),
+                 Text('Enter the one-time pairing code shown on your PC.',
+                     style: TextStyle(color: textPrimary), textAlign: TextAlign.center),
+                 const SizedBox(height: 12),
+                 TextField(
+                   key: const Key('pairingCode'),
+                   controller: _pairingCodeController,
+                   obscureText: true,
+                   autocorrect: false,
+                   enableSuggestions: false,
+                   style: TextStyle(color: textPrimary),
+                   decoration: const InputDecoration(labelText: 'One-time pairing code', border: OutlineInputBorder()),
+                 ),
+                 const SizedBox(height: 8),
+                 ElevatedButton(
+                   onPressed: () {
+                     final code = _pairingCodeController.text.trim();
+                     if (code.isEmpty) return;
+                     _pairingCodeController.clear();
+                     ws.pairWithCode(code);
+                   },
+                   child: const Text('Pair with code'),
+                 ),
+                 TextButton(
+                   onPressed: () => setState(() => _showEmbeddedToken = !_showEmbeddedToken),
+                   child: const Text('Use embedded server token instead'),
+                 ),
+                 if (_showEmbeddedToken) ...[
+                   TextField(
+                     key: const Key('embeddedToken'),
+                     controller: _embeddedTokenController,
+                     obscureText: true,
+                     autocorrect: false,
+                     enableSuggestions: false,
+                     style: TextStyle(color: textPrimary),
+                     decoration: const InputDecoration(labelText: 'Embedded server token', border: OutlineInputBorder()),
+                   ),
+                   ElevatedButton(
+                     onPressed: () {
+                       final token = _embeddedTokenController.text.trim();
+                       if (token.isEmpty) return;
+                       _embeddedTokenController.clear();
+                       ws.pairWithToken(token);
+                     },
+                     child: const Text('Pair with embedded server token'),
+                   ),
+                 ],
+               ],
+               if (_connectionError(ws.authError) case final error?) ...[
+                 const SizedBox(height: 8),
+                 Text(error, key: const Key('pairingError'), style: const TextStyle(color: Color(0xFFEF4444)), textAlign: TextAlign.center),
+               ],
+               if (ws.configError != null && !ws.configConflict)
+                 const Text('Could not update the configuration.', style: TextStyle(color: Color(0xFFEF4444))),
+               if (ws.configConflict)
+                 TextButton(
+                   onPressed: () => setState(() => _conflictDialogShown = false),
+                   child: const Text('Review configuration conflict'),
+                 ),
               const SizedBox(height: 20),
 
               // Saved PCs Header & List
@@ -510,7 +679,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
               ...ws.savedServers.asMap().entries.map((entry) {
                 final idx = entry.key;
                 final server = entry.value;
-                final isSelected = server['ip'] == ws.serverIp;
+                 final isSelected = server['ip'] == ws.serverIp && server['port'] == ws.serverPort;
 
                 return Container(
                   margin: const EdgeInsets.only(bottom: 8),
@@ -541,7 +710,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                         ),
                       ),
                       subtitle: Text(
-                        "${server['ip']}:${server['port']}",
+                         "${server['secure'] == true ? 'https' : 'http'}://${server['ip']}:${server['port']}",
                         style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5)),
                       ),
                       trailing: Row(
@@ -559,7 +728,15 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                           ),
                         ],
                       ),
-                      onTap: () => ws.selectServer(server),
+                       onTap: () {
+                         final host = server['ip']?.toString() ?? '';
+                         if (server['secure'] != true && !_isNumericLoopback(host)) {
+                           ws.addServer(server['name']?.toString() ?? '', host,
+                               server['port'] as int? ?? 8484, '', secure: true);
+                         } else {
+                           ws.selectServer(server);
+                         }
+                       },
                     ),
                   ),
                 );
@@ -584,19 +761,45 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
     );
   }
 
-  void _openAddServerDialog(BuildContext context, WebSocketService ws) {
-    final nameCtrl = TextEditingController();
-    final ipCtrl = TextEditingController(text: "192.168.29.128");
-    final portCtrl = TextEditingController(text: "8484");
+   bool _isNumericLoopback(String host) {
+     final address = InternetAddress.tryParse(host);
+     return address != null && address.isLoopback;
+   }
 
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
+   bool _validHost(String host) {
+     if (host.isEmpty || host.length > 253 || host != host.trim() ||
+         host.contains(RegExp(r'[/@?#\s\[\]]'))) {
+       return false;
+     }
+     if (host.contains(':')) {
+       return InternetAddress.tryParse(host)?.type == InternetAddressType.IPv6;
+     }
+     final labels = host.split('.');
+     if (labels.length == 4 && labels.every((label) => RegExp(r'^\d+$').hasMatch(label))) {
+       return labels.every((label) => label.length <= 3 &&
+           (label.length == 1 || !label.startsWith('0')) && int.parse(label) <= 255);
+     }
+     if (RegExp(r'^[0-9.]+$').hasMatch(host)) return false;
+     return labels.every((label) => label.isNotEmpty && label.length <= 63 &&
+         RegExp(r'^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$').hasMatch(label));
+   }
+
+   void _openAddServerDialog(BuildContext context, WebSocketService ws) {
+     final nameCtrl = TextEditingController();
+     final ipCtrl = TextEditingController();
+     final portCtrl = TextEditingController(text: "8484");
+     var secure = true;
+     String? validationError;
+
+     showDialog(
+       context: context,
+       builder: (context) {
+         return StatefulBuilder(builder: (context, updateDialog) {
+         return AlertDialog(
           backgroundColor: bgColor,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Text("Add PC Connection", style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold)),
-          content: Column(
+           content: SingleChildScrollView(child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
@@ -613,14 +816,14 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                 controller: ipCtrl,
                 style: TextStyle(color: textPrimary),
                 decoration: InputDecoration(
-                  labelText: "IP Address (e.g. 192.168.1.50)",
+                   labelText: "Host or IP address",
                   labelStyle: TextStyle(color: textPrimary.withOpacity(0.6)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: portCtrl,
+               TextField(
+                 controller: portCtrl,
                 keyboardType: TextInputType.number,
                 style: TextStyle(color: textPrimary),
                 decoration: InputDecoration(
@@ -628,9 +831,18 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                   labelStyle: TextStyle(color: textPrimary.withOpacity(0.6)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-              ),
-            ],
-          ),
+               ),
+               SwitchListTile(
+                 title: const Text('Secure connection (WSS / HTTPS)'),
+                 subtitle: const Text('Requires a certificate trusted by this device. No certificate bypass.'),
+                 value: secure,
+                 onChanged: (value) => updateDialog(() => secure = value),
+               ),
+               if (validationError != null)
+                 Text(validationError!, key: const Key('serverValidationError'),
+                     style: const TextStyle(color: Color(0xFFEF4444))),
+             ],
+           )),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -641,19 +853,26 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
               onPressed: () {
                 final name = nameCtrl.text.trim();
                 final ip = ipCtrl.text.trim();
-                final port = int.tryParse(portCtrl.text.trim()) ?? 8484;
+                 final port = int.tryParse(portCtrl.text.trim());
 
-                if (ip.isNotEmpty) {
-                  ws.addServer(name, ip, port, "8484");
-                  Navigator.pop(context);
-                }
+                 if (!_validHost(ip)) {
+                   updateDialog(() => validationError = 'Enter a valid host or numeric IP address.');
+                 } else if (port == null || port < 1 || port > 65535) {
+                   updateDialog(() => validationError = 'Enter a port between 1 and 65535.');
+                 } else if (!secure && !_isNumericLoopback(ip)) {
+                   updateDialog(() => validationError = 'Plaintext is allowed only for numeric loopback addresses.');
+                 } else {
+                   ws.addServer(name, ip, port, '', secure: secure);
+                   Navigator.pop(context);
+                 }
               },
               child: const Text("Save & Connect"),
             ),
           ],
-        );
-      },
-    );
+         );
+         });
+       },
+     );
   }
 
   // Safe Neumorphic Drawer (Wrapped in SingleChildScrollView to prevent RenderFlex Overflow)
@@ -677,7 +896,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                   children: [
                     Text("KDE DECK", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: textPrimary, letterSpacing: 2)),
                     Text("Connected to: ${ws.activeServerName}", style: TextStyle(fontSize: 12, color: accentBlue, fontWeight: FontWeight.bold)),
-                    Text("http://${ws.serverIp}:${ws.serverPort}", style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
+                     Text('${_httpEndpoint(ws) ?? 'Invalid address'}', style: TextStyle(fontSize: 11, color: textPrimary.withOpacity(0.5))),
                   ],
                 ),
               ),
@@ -729,7 +948,18 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                   ws.toggleDragDrop(val);
                 },
               ),
-              Divider(color: textPrimary.withOpacity(0.12), height: 24),
+               Divider(color: textPrimary.withValues(alpha: 0.12), height: 24),
+
+               ListTile(
+                 leading: Icon(Icons.phonelink_lock_rounded, color: accentBlue),
+                 title: Text('Re-pair / forget credential', style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold)),
+                  subtitle: Text('Remove the saved credential for this PC and pair again',
+                      style: TextStyle(fontSize: 11, color: textPrimary.withValues(alpha: 0.5))),
+                 onTap: () {
+                   Navigator.pop(context);
+                   ws.clearCredential();
+                 },
+               ),
 
               // Switch / Manage PCs
               ListTile(
