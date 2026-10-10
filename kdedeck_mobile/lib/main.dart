@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:provider/provider.dart';
 import 'services/websocket_service.dart';
 import 'services/dart_server_service.dart';

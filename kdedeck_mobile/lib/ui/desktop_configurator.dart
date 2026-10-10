@@ -1,7 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'dynamic_matrix_grid.dart';
 import 'package:provider/provider.dart';
 import '../services/websocket_service.dart';
@@ -373,7 +371,6 @@ class _DesktopConfiguratorScreenState extends State<DesktopConfiguratorScreen> {
     final items = board['items'] as List<dynamic>? ?? [];
     final cols = board['grid_columns'] ?? 4;
     final rows = board['grid_rows'] ?? 3;
-    final totalSlots = cols * rows;
 
     return Padding(
       padding: const EdgeInsets.all(16),
