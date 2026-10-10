@@ -14,7 +14,7 @@ approval policies, or configuration validation.
 | Endpoint | Standalone daemon | Flutter desktop embedded server |
 |---|---|---|
 | Bind | `127.0.0.1:8484` by default; `0.0.0.0:8484` only with `allow_lan: true` | `0.0.0.0:8484` (`anyIPv4`) |
-| WebSocket | `wss://host:8484/ws` for LAN/TLS; `ws://127.0.0.1:8484/ws` only when loopback TLS is unset | `ws://host:8484/ws` (embedded auth boundary; TLS pending) |
+| WebSocket | `wss://host:8484/ws` for LAN/TLS; `ws://127.0.0.1:8484/ws` only when loopback TLS is unset | WSS when TLS is configured; plain WS only on loopback without TLS |
 | `/` and static frontend | Serves `deckboard_daemon/frontend` | Not served; returns `KDeDeck Server Running` with 404 |
 | `/system_icons?path=...` | Serves an existing file path | Not served |
 | Persistence | `deckboard_config.json` in daemon working directory | `SharedPreferences` key `deck_config_data` |

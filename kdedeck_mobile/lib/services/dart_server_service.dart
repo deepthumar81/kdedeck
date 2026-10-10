@@ -38,6 +38,33 @@ class StaticPairingTokenSource implements PairingTokenSource {
   Future<PairingCredential?> read() async => credential;
 }
 
+typedef SecurityContextLoader = SecurityContext Function(
+  String certificateFile,
+  String privateKeyFile,
+);
+
+class _TlsConfiguration {
+  const _TlsConfiguration({
+    required this.certificateFile,
+    required this.privateKeyFile,
+    required this.hasCertificateVariable,
+    required this.hasPrivateKeyVariable,
+  });
+
+  final String? certificateFile;
+  final String? privateKeyFile;
+  final bool hasCertificateVariable;
+  final bool hasPrivateKeyVariable;
+
+  bool get hasAnyVariable => hasCertificateVariable || hasPrivateKeyVariable;
+
+  bool get isComplete =>
+      certificateFile != null &&
+      certificateFile!.isNotEmpty &&
+      privateKeyFile != null &&
+      privateKeyFile!.isNotEmpty;
+}
+
 /// Local pairing storage for the embedded server.
 ///
 /// An explicitly configured `DART_SERVER_PAIRING_TOKEN` takes precedence.
@@ -106,11 +133,15 @@ class DartServerService extends ChangeNotifier {
     Duration sessionDuration = const Duration(minutes: 30),
     bool trustLoopback = true,
     InternetAddress? bindAddress,
+    Map<String, String>? environment,
+    SecurityContextLoader? securityContextLoader,
   })  : _tokenSource = tokenSource,
         _now = now ?? DateTime.now,
         _sessionDuration = sessionDuration,
         _trustLoopback = trustLoopback,
         _bindAddress = bindAddress,
+        _environment = environment ?? Platform.environment,
+        _securityContextLoader = securityContextLoader ?? _loadSecurityContext,
         _isSingleton = false;
 
   DartServerService._internal()
@@ -119,6 +150,8 @@ class DartServerService extends ChangeNotifier {
         _sessionDuration = const Duration(minutes: 30),
         _trustLoopback = true,
         _bindAddress = null,
+        _environment = Platform.environment,
+        _securityContextLoader = _loadSecurityContext,
         _isSingleton = true;
 
   final PairingTokenSource _tokenSource;
@@ -126,12 +159,15 @@ class DartServerService extends ChangeNotifier {
   final Duration _sessionDuration;
   final bool _trustLoopback;
   final InternetAddress? _bindAddress;
+  final Map<String, String> _environment;
+  final SecurityContextLoader _securityContextLoader;
   final bool _isSingleton;
 
   HttpServer? _server;
   final List<WebSocket> _clients = [];
   final Map<WebSocket, _ClientSession> _sessions = {};
   bool isRunning = false;
+  bool isSecure = false;
   int port = 8484;
 
   Map<String, dynamic>? configData;
@@ -156,23 +192,45 @@ class DartServerService extends ChangeNotifier {
   Future<void> startServer() async {
     if (isRunning) return;
 
-    await _loadConfig();
-    // Load/generate the local credential before accepting a socket. This also
-    // means a persistence failure cannot accidentally create an open server.
-    final credential = await _tokenSource.read();
-    if (credential == null || !credential.isUsable(_now())) {
-      debugPrint('[DartServerService] No usable local pairing credential');
-      return;
-    }
+    final requestedPort = port;
 
     try {
-      _server = await HttpServer.bind(
-        _bindAddress ?? InternetAddress.anyIPv4,
-        port,
-      );
+      await _loadConfig();
+      // Load/generate the local credential before accepting a socket. This
+      // also means a persistence failure cannot accidentally create an open
+      // server.
+      final credential = await _tokenSource.read();
+      if (credential == null || !credential.isUsable(_now())) {
+        debugPrint('[DartServerService] No usable local pairing credential');
+        return;
+      }
+
+      final bindAddress = _bindAddress ?? InternetAddress.anyIPv4;
+      final tls = _tlsConfiguration();
+      final loopbackBind = bindAddress.isLoopback;
+      if (!loopbackBind && !tls.isComplete) {
+        throw const FormatException('TLS is required for a non-loopback bind');
+      }
+      if (tls.hasAnyVariable && !tls.isComplete) {
+        throw const FormatException('TLS configuration is incomplete');
+      }
+
+      final secure = tls.hasAnyVariable;
+      final context = secure
+          ? _securityContextLoader(
+              tls.certificateFile!,
+              tls.privateKeyFile!,
+            )
+          : null;
+
+      _server = secure
+          ? await HttpServer.bindSecure(bindAddress, port, context!)
+          : await HttpServer.bind(bindAddress, port);
       port = _server!.port;
+      isSecure = secure;
       isRunning = true;
-      debugPrint('[DartServerService] Running on port $port');
+      debugPrint(
+          '[DartServerService] Running on port $port (${secure ? 'TLS' : 'plain'})');
       notifyListeners();
 
       _server!.listen((request) async {
@@ -180,7 +238,8 @@ class DartServerService extends ChangeNotifier {
           try {
             final remoteAddress = request.connectionInfo?.remoteAddress;
             final socket = await WebSocketTransformer.upgrade(request);
-            _handleClientConnect(socket, _isLoopback(remoteAddress));
+            _handleClientConnect(
+                socket, !isSecure && _isLoopback(remoteAddress));
           } catch (_) {
             // Do not log request data or handshake details.
           }
@@ -193,22 +252,66 @@ class DartServerService extends ChangeNotifier {
       });
 
       _startMetricsLoop();
-    } catch (e) {
-      debugPrint('[DartServerService] Failed to bind port $port: $e');
+    } catch (_) {
+      await _resetAfterStartFailure(requestedPort);
+      // Keep certificate paths, key contents, credentials, and low-level
+      // socket errors out of logs.
+      debugPrint('[DartServerService] Failed to start server');
     }
   }
 
   Future<void> stopServer() async {
     _metricsTimer?.cancel();
+    _metricsTimer = null;
     for (final client in List<WebSocket>.from(_clients)) {
-      await client.close();
+      try {
+        await client.close();
+      } catch (_) {}
     }
     _clients.clear();
     _sessions.clear();
     await _server?.close(force: true);
     _server = null;
     isRunning = false;
+    isSecure = false;
     if (_isSingleton) notifyListeners();
+  }
+
+  Future<void> _resetAfterStartFailure(int requestedPort) async {
+    _metricsTimer?.cancel();
+    _metricsTimer = null;
+    for (final client in List<WebSocket>.from(_clients)) {
+      try {
+        await client.close();
+      } catch (_) {}
+    }
+    _clients.clear();
+    _sessions.clear();
+    await _server?.close(force: true);
+    _server = null;
+    isRunning = false;
+    isSecure = false;
+    port = requestedPort;
+  }
+
+  _TlsConfiguration _tlsConfiguration() {
+    return _TlsConfiguration(
+      certificateFile: _environment['KDEDECK_TLS_CERT_FILE'],
+      privateKeyFile: _environment['KDEDECK_TLS_KEY_FILE'],
+      hasCertificateVariable: _environment.containsKey('KDEDECK_TLS_CERT_FILE'),
+      hasPrivateKeyVariable: _environment.containsKey('KDEDECK_TLS_KEY_FILE'),
+    );
+  }
+
+  static SecurityContext _loadSecurityContext(
+    String certificateFile,
+    String privateKeyFile,
+  ) {
+    final context = SecurityContext();
+    context
+      ..useCertificateChain(certificateFile)
+      ..usePrivateKey(privateKeyFile);
+    return context;
   }
 
   bool _isLoopback(InternetAddress? address) {

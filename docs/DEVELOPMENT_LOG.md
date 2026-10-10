@@ -2086,6 +2086,41 @@ updated to perform pairing/token authentication or secure credential storage.
 The embedded Linux launch path still needs the standalone approved-identity
 policy and bounded subprocess controls.
 
+## Step 54 — Add embedded HTTPS/WSS transport parity
+
+### Goal
+
+Prevent the embedded Flutter server from exposing a plaintext LAN listener while
+allowing explicit TLS on loopback and remote connections.
+
+### Changes
+
+- Added injectable TLS environment and security-context loading to the embedded
+  server, using `KDEDECK_TLS_CERT_FILE` and `KDEDECK_TLS_KEY_FILE`.
+- Plain HTTP/WS now fails closed for non-loopback binds. Complete valid TLS is
+  required before opening a non-loopback listener; partial, malformed, missing,
+  and mismatched certificate/key inputs never downgrade.
+- Explicit TLS secures loopback too, and `isSecure` exposes the active transport
+  mode for host diagnostics/tests.
+- The local trusted shortcut now applies only to an actual loopback peer on a
+  plaintext listener; secure/non-loopback connections always authenticate.
+- Startup failures reset listener state and port ownership without exposing
+  certificate paths, key contents, credentials, or low-level errors.
+- Added disposable OpenSSL fixtures covering plaintext loopback, secure loopback,
+  required non-loopback TLS, WSS auth, bad TLS inputs, and plaintext rejection.
+
+### Verification
+
+- Embedded Flutter suite: **56 tests passed**.
+- Focused analysis: **no issues**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+Certificate provisioning/fingerprint trust UX, physical LAN verification, shared
+config validation, and lifecycle/tray parity remain pending. The client still
+requires a trusted certificate and does not accept invalid certificates.
+
 ### Scope boundary
 
 Browser end-to-end coverage, Flutter WSS/secure device credential storage,

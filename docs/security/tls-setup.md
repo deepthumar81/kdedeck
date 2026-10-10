@@ -55,10 +55,12 @@ If secure storage is unavailable, authentication fails visibly; preferences are
 not used as an insecure fallback. Device keystore/keychain/secret-service
 behaviour across upgrades still requires physical-device QA.
 
-The embedded Flutter server remains plaintext. **Do not** send its token over a
-LAN: the client now blocks this route until embedded TLS is implemented. Plain
-WS remains available only for numeric loopback (`127.x.x.x` or `::1`), not a DNS
-alias such as `localhost`.
+The embedded Flutter server now follows the same transport rule: a non-loopback
+bind requires `KDEDECK_TLS_CERT_FILE` and `KDEDECK_TLS_KEY_FILE` and serves WSS.
+With both variables set, loopback also serves HTTPS/WSS. With neither set, only
+a loopback bind may serve plain HTTP/WS. The Flutter client blocks remote plain
+WS and uses normal certificate validation. Plain WS remains available only for
+numeric loopback (`127.x.x.x` or `::1`), not a DNS alias such as `localhost`.
 
 ## Verification completed
 
@@ -80,4 +82,5 @@ Tests require OpenSSL on the test host; production uses Dart's TLS implementatio
 - Verified trust/fingerprint provisioning and device keystore upgrade testing.
 - Physical Android/Linux LAN pairing and icon/editor end-to-end tests.
 - Certificate expiry/rotation UX and hostname/expiry rejection fixtures.
-- Embedded Flutter server transport policy convergence.
+- Certificate provisioning/fingerprint workflow for standalone and embedded
+  servers, plus physical LAN verification.
