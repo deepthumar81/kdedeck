@@ -47,6 +47,9 @@ class DartServerService {
   static const int defaultMaxRequestHeaderBytes = 32 * 1024;
   static const int defaultMaxRequestHeaderCount = 100;
   static const int defaultMaxRequestBodyBytes = 1024 * 1024;
+  static const String _iconSvgContentSecurityPolicy =
+      "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+      'sandbox';
   static const String _contentSecurityPolicy =
       "default-src 'self'; base-uri 'none'; object-src 'none'; "
       "frame-ancestors 'none'; form-action 'self'; script-src 'self' "
@@ -110,7 +113,8 @@ class DartServerService {
       _maxRequestBodyBytes = defaultMaxRequestBodyBytes,
       _webSocketRateLimiter = WebSocketRateLimiter(),
       _metricsInterval = const Duration(seconds: 4),
-      _configWriter = null;
+      _configWriter = null,
+      _systemIconRoots = List.unmodifiable(SystemActionsService.linuxIconRoots);
 
   /// Creates an isolated server for protocol tests.
   ///
@@ -140,6 +144,7 @@ class DartServerService {
     int maxRequestHeaderBytes = defaultMaxRequestHeaderBytes,
     int maxRequestHeaderCount = defaultMaxRequestHeaderCount,
     int maxRequestBodyBytes = defaultMaxRequestBodyBytes,
+    Iterable<String>? systemIconRoots,
     WebSocketRateLimiter? webSocketRateLimiter,
     int maxMessagesPerWindow = WebSocketRateLimiter.defaultMaxMessagesPerWindow,
     int maxActionRequestsPerWindow =
@@ -209,7 +214,10 @@ class DartServerService {
              clock: clock,
            ),
        _metricsInterval = _validateMetricsInterval(metricsInterval),
-       _configWriter = configWriter {
+       _configWriter = configWriter,
+       _systemIconRoots = List.unmodifiable(
+         systemIconRoots ?? SystemActionsService.linuxIconRoots,
+       ) {
     if (authSessionManager != null && sessionStoreFactory != null) {
       throw ArgumentError(
         'authSessionManager and sessionStoreFactory are mutually exclusive',
@@ -245,6 +253,7 @@ class DartServerService {
   final int _maxRequestBodyBytes;
   final WebSocketRateLimiter _webSocketRateLimiter;
   final Duration _metricsInterval;
+  final List<String> _systemIconRoots;
   final Future<bool> Function(Map<String, dynamic>, Map<String, dynamic>?)?
   _configWriter;
   Future<void> _saveOperation = Future<void>.value();
@@ -305,10 +314,9 @@ class DartServerService {
   Timer? _metricsTimer;
   Object? _metricsProbeToken;
 
-  String? _resolveSystemIconPath(String requestedPath) {
-    if (!Platform.isLinux) return null;
-    return IconPathValidator(SystemActionsService.linuxIconRoots)
-        .resolve(requestedPath);
+  Future<ApprovedIcon?> _readApprovedSystemIcon(String requestedPath) {
+    if (!Platform.isLinux) return Future.value(null);
+    return IconPathValidator(_systemIconRoots).readApprovedIcon(requestedPath);
   }
 
   Future<String?> _resolveFrontendRoot() async {
@@ -578,38 +586,37 @@ class DartServerService {
       try {
         final iconPath = request.uri.queryParameters['path'];
         if (iconPath != null && iconPath.isNotEmpty) {
-          final resolvedPath = _resolveSystemIconPath(iconPath);
-          if (resolvedPath == null) {
+          final icon = await _readApprovedSystemIcon(iconPath);
+          if (icon == null) {
             request.response
               ..statusCode = HttpStatus.notFound
               ..close();
             return;
           }
-
-          final file = File(resolvedPath);
-          final exists = await file.exists();
           if (!_isCurrentHttpGeneration(generation)) {
             await _rejectStaleHttpRequest(request, bodyAlreadyOwned: true);
             return;
           }
-          if (exists) {
-            final ext = resolvedPath.split('.').last.toLowerCase();
-            var contentType = 'image/png';
-            if (ext == 'svg')
-              contentType = 'image/svg+xml';
-            else if (ext == 'xpm')
-              contentType = 'image/x-xpixmap';
 
-            request.response.headers.contentType = ContentType.parse(
-              contentType,
+          final contentType = switch (icon.extension) {
+            'svg' => 'image/svg+xml',
+            'xpm' => 'image/x-xpixmap',
+            _ => 'image/png',
+          };
+          request.response
+            ..headers.contentType = ContentType.parse(contentType)
+            ..headers.contentLength = icon.bytes.length;
+          if (icon.extension == 'svg') {
+            request.response.headers.set(
+              'Content-Security-Policy',
+              _iconSvgContentSecurityPolicy,
             );
-            if (!await _serveHttpFile(request, file, generation)) {
-              request.response
-                ..statusCode = HttpStatus.internalServerError
-                ..close();
-            }
-            return;
           }
+          if (!await _serveHttpBytes(request, icon.bytes, generation) &&
+              _isCurrentHttpGeneration(generation)) {
+            await _closeHttpResponse(request.response);
+          }
+          return;
         }
         request.response
           ..statusCode = HttpStatus.notFound
@@ -666,6 +673,28 @@ class DartServerService {
         await _closeHttpResponse(request.response);
         return true;
       }
+      await request.response.close();
+      return true;
+    } catch (_) {
+      if (!_isCurrentHttpGeneration(generation)) {
+        await _closeHttpResponse(request.response);
+        return true;
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _serveHttpBytes(
+    HttpRequest request,
+    List<int> bytes,
+    int generation,
+  ) async {
+    if (!_isCurrentHttpGeneration(generation)) {
+      await _closeHttpResponse(request.response);
+      return true;
+    }
+    try {
+      request.response.add(bytes);
       await request.response.close();
       return true;
     } catch (_) {

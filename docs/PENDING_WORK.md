@@ -77,8 +77,8 @@ security or UI/platform parity.
   replacement behavior.
 - [x] Add a backward-compatible `config_schema_version` marker and reject
   unsupported versions without rewriting legacy files (Step 42).
-- [ ] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
-  user-local Flatpak and package icon roots with no feature regression.
+- [x] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
+  user-local Flatpak and package icon roots with no feature regression (Step 55).
 - [ ] TLS certificate provisioning, verified fingerprint/trust workflow, expiry
   and hostname rejection fixtures, rotation UX and physical LAN verification.
 - [x] Reject explicitly unsupported protocol versions before standalone

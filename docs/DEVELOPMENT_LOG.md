@@ -2178,3 +2178,65 @@ remain pending. The app does not provision certificate trust or implement a
 fingerprint acceptance UI. The embedded server remains plaintext and remote
 embedded use is deliberately blocked until its TLS policy converges. Standalone
 production persistence is unchanged; no commits or pushes were made by the agent.
+
+## Step 55 — Approved icon serving and bounded SVG handling
+
+### Goal
+
+Close the standalone `/system_icons` file-disclosure gap without breaking
+Debian, user-local Flatpak, or Snap icon discovery.
+
+### Changes
+
+- Revalidated every requested icon against canonical approved roots at request
+  time; traversal, control characters, unsupported extensions, symlink escapes,
+  directories, and non-image content fail closed.
+- Added a 4 MiB icon limit, bounded named-icon traversal (4,096 entries and
+  depth 32), and regular-file checks.
+- Added PNG, SVG, and XPM signature/content probes. SVG files are read only
+  within the size limit and reject scripts, foreign objects, XML external
+  entities/doctype declarations, event-handler attributes, and external href or
+  URL resources.
+- Added an injectable icon-root seam for server tests, bounded streaming and
+  content-length checks, and a restrictive sandbox CSP for SVG responses.
+- Added focused resolver and HTTP tests for valid icons, traversal, symlink
+  escapes, unsupported/mislabeled/oversized icons, bounded lookup, and unsafe
+  SVG rejection.
+
+### Changed files
+
+- `deckboard_daemon/backend/lib/app_discovery.dart`
+- `deckboard_daemon/backend/lib/dart_server_service.dart`
+- `deckboard_daemon/backend/lib/system_actions_service.dart`
+- `deckboard_daemon/backend/pubspec.yaml`
+- `deckboard_daemon/backend/pubspec.lock`
+- `deckboard_daemon/backend/test/app_discovery_test.dart`
+- `deckboard_daemon/backend/test/dart_server_static_test.dart`
+- `deckboard_daemon/backend/test/linux_icon_roots_test.dart`
+- `docs/PENDING_WORK.md`
+- `docs/protocol.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Verification
+
+- Focused resolver tests: **PASS**, 15 tests.
+- Focused static-server tests: **PASS**, 14 tests.
+- Full backend `dart test -j 1 -r compact`: **PASS**, 221 tests. Serial
+  execution avoids the existing shared-session lifecycle race seen in the
+  default parallel runner.
+- Backend `dart analyze`: **PASS**, no errors; existing informational
+  diagnostics remain.
+- `dart format --output=none --set-exit-if-changed lib test`: **PASS**.
+- `dart compile exe bin/backend.dart -o /tmp/kdedeck-icon-security-verified`:
+  **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This slice does not add icon authentication, certificate trust provisioning,
+physical-device verification, or browser end-to-end coverage. The route remains
+for the authenticated/trusted deployment boundary described by the protocol.
+The validator returns a stable validated byte snapshot, but Dart's portable
+filesystem APIs do not provide an fd-native `openat`/`O_NOFOLLOW` primitive, so
+a concurrent post-validation filesystem replacement remains a residual
+platform limitation.

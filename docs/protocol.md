@@ -455,15 +455,20 @@ with a versioned schema.
 
 ## Icon HTTP route
 
-The standalone server accepts `GET /system_icons?path=<filesystem path>`. If
-the path exists, it streams PNG, SVG, or XPM content with a matching content
-type and a one-day cache header; missing paths return 404. Flutter constructs
-this URL from `system_icon_path` for remote icon rendering
+The standalone server accepts `GET /system_icons?path=<filesystem path>`. The
+request is resolved only against the daemon's approved Debian, user-local
+Flatpak, and Snap icon roots. It streams only regular PNG, SVG, or XPM files
+that pass a 4 MiB size/content check; missing, unsafe, unsupported, or
+out-of-root paths return 404. SVG responses also receive a restrictive
+document policy that disables active content and external resource loading.
+Responses use the server's no-store policy. Flutter constructs this URL from
+`system_icon_path` for remote icon rendering
 ([`neumorphic_deck.dart`](../kdedeck_mobile/lib/ui/neumorphic_deck.dart#L396-L408)).
 
-This route is currently unauthenticated and does not constrain the path to an
-icon directory. Treat it as a local-trusted-network development feature, not
-a safe public HTTP file server.
+This route is still unauthenticated and is intended for the already-connected
+local/trusted client path, not as a general public file server. Authentication
+and transport policy remain the responsibility of the surrounding HTTP/WebSocket
+deployment.
 
 ## Compatibility and future boundary
 

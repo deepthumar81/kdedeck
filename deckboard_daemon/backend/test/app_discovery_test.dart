@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:backend/app_discovery.dart';
 import 'package:test/test.dart';
@@ -169,6 +170,10 @@ Icon=second-icon
       () {
         expect(validator.resolve('debian-app'), endsWith('/debian-app.png'));
         expect(
+          validator.resolve('${debianIcons.path}/debian-app.png'),
+          endsWith('/debian-app.png'),
+        );
+        expect(
           validator.resolve('com.example.App'),
           endsWith('/com.example.App.svg'),
         );
@@ -202,5 +207,168 @@ Icon=second-icon
       expect(validator.resolve(unsupported.path), isNull);
       expect(validator.resolve('unsupported.jpg'), isNull);
     });
+
+    test('requires regular files with matching image content', () {
+      final directory = Directory('${debianIcons.path}/directory.png')
+        ..createSync();
+      final mislabeled = File('${debianIcons.path}/mislabeled.png')
+        ..writeAsBytesSync([1, 2, 3]);
+
+      expect(validator.resolve(directory.path), isNull);
+      expect(validator.resolve(mislabeled.path), isNull);
+    });
+
+    test('rejects oversized approved icons', () {
+      final oversized = File('${debianIcons.path}/oversized.png')
+        ..writeAsBytesSync([
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+          ...List<int>.filled(4 * 1024 * 1024, 0),
+        ]);
+
+      expect(validator.resolve(oversized.path), isNull);
+    });
+
+    test('does not follow symlinked directories during named lookup', () {
+      final escapedDirectory = Directory('${outside.path}/icons')..createSync();
+      File('${escapedDirectory.path}/hidden.png')
+          .writeAsBytesSync([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      try {
+        Link('${debianIcons.path}/escaped-icons')
+            .createSync(escapedDirectory.path);
+      } on FileSystemException {
+        return;
+      }
+
+      expect(validator.resolve('hidden'), isNull);
+    });
+
+    test('bounds named-icon directory traversal', () {
+      for (var index = 0; index < 4100; index++) {
+        Directory('${debianIcons.path}/entry-$index').createSync();
+      }
+
+      expect(validator.resolve('missing-icon'), isNull);
+    });
+
+    test(
+      'reads only explicit paths and returns a bounded immutable snapshot',
+      () async {
+        expect(await validator.readApprovedIcon('debian-app'), isNull);
+        final icon = await validator.readApprovedIcon(
+          '${debianIcons.path}/debian-app.png',
+        );
+        expect(icon, isNotNull);
+        expect(icon!.path, endsWith('/debian-app.png'));
+        expect(icon.extension, 'png');
+        expect(icon.bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+        expect(() => icon.bytes[0] = 0, throwsUnsupportedError);
+      },
+    );
+
+    test('validates and serializes typical SVG content', () async {
+      final svg = File('${debianIcons.path}/typical.svg')
+        ..writeAsStringSync('''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <defs><linearGradient id="shade"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient></defs>
+  <path fill="url(#shade)" style="stroke:#123;stroke-width:2" d="M0 0 L10 10"/>
+</svg>''');
+      final icon = await validator.readApprovedIcon(svg.path);
+      expect(icon, isNotNull);
+      expect(utf8.decode(icon!.bytes), contains('<svg'));
+      expect(utf8.decode(icon.bytes), contains('linearGradient'));
+    });
+
+    test('rejects malformed and active or external SVG constructs', () async {
+      final payloads = <String>[
+        '<svg xmlns="http://www.w3.org/2000/svg"><path>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+        '<!DOCTYPE svg [<!ENTITY x "script">]><svg xmlns="http://www.w3.org/2000/svg"/>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><use href="&#x68;ttps://evil.test/a"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><use href="icons/a.svg"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:url(https://evil.test/x)"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>@import url(https://evil.test/x)</style></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><animate attributeName="d" to="x"/></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><path onload="alert(1)"/></svg>',
+      ];
+      for (var index = 0; index < payloads.length; index++) {
+        final file = File('${debianIcons.path}/unsafe-$index.svg')
+          ..writeAsStringSync(payloads[index]);
+        expect(
+          await validator.readApprovedIcon(file.path),
+          isNull,
+          reason: payloads[index],
+        );
+      }
+    });
+
+    test('accepts exactly max PNG bytes and rejects one byte over', () async {
+      final exact = File('${debianIcons.path}/exact.png')
+        ..writeAsBytesSync([
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+          ...List<int>.filled(IconPathValidator.maxIconBytes - 8, 0),
+        ]);
+      final over = File('${debianIcons.path}/over.png')
+        ..writeAsBytesSync([
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+          ...List<int>.filled(IconPathValidator.maxIconBytes - 7, 0),
+        ]);
+      expect(
+        (await validator.readApprovedIcon(exact.path))!.bytes.length,
+        IconPathValidator.maxIconBytes,
+      );
+      expect(await validator.readApprovedIcon(over.path), isNull);
+    });
+
+    test(
+      'snapshot remains unchanged if source is mutated after reading',
+      () async {
+        final file = File('${debianIcons.path}/snapshot.png')
+          ..writeAsBytesSync([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+        final icon = await validator.readApprovedIcon(file.path);
+        file.writeAsBytesSync([1, 2, 3]);
+        expect(icon!.bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      },
+    );
+
+    test(
+      'read API rejects symlink escapes and mismatched or empty formats',
+      () async {
+        final escaped = File('${debianIcons.path}/read-escape.png');
+        try {
+          Link(escaped.path).createSync('${outside.path}/outside.png');
+        } on FileSystemException {
+          return;
+        }
+        expect(await validator.readApprovedIcon(escaped.path), isNull);
+        for (final name in ['empty.png', 'mismatch.png', 'empty.xpm']) {
+          File('${debianIcons.path}/$name').writeAsBytesSync([]);
+          expect(
+            await validator.readApprovedIcon('${debianIcons.path}/$name'),
+            isNull,
+          );
+        }
+      },
+    );
   });
 }

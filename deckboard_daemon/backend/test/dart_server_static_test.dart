@@ -7,21 +7,30 @@ import 'package:test/test.dart';
 void main() {
   late Directory fixtureRoot;
   late Directory outsideRoot;
+  late Directory iconRoot;
   DartServerService? server;
 
   setUp(() async {
     fixtureRoot = await Directory.systemTemp.createTemp('kdedeck-frontend');
     outsideRoot = await Directory.systemTemp.createTemp('kdedeck-outside');
+    iconRoot = await Directory('${fixtureRoot.path}/icons').create();
     await File('${fixtureRoot.path}/index.html')
         .writeAsString('<html>fixture</html>');
     await File('${fixtureRoot.path}/style.css').writeAsString('body {}');
-      await File('${fixtureRoot.path}/app.js')
-          .writeAsString('const fixture = 1;');
-      await File('${fixtureRoot.path}/module.mjs')
-          .writeAsString('export const fixture = 1;');
+    await File('${fixtureRoot.path}/app.js')
+        .writeAsString('const fixture = 1;');
+    await File('${fixtureRoot.path}/module.mjs')
+        .writeAsString('export const fixture = 1;');
     await File('${fixtureRoot.path}/asset.json').writeAsString('{"ok":true}');
     await Directory('${fixtureRoot.path}/assets').create();
     await File('${fixtureRoot.path}/assets/icon.png').writeAsBytes([1, 2, 3]);
+    await File('${iconRoot.path}/valid.png')
+        .writeAsBytes([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await File('${iconRoot.path}/safe.svg').writeAsString(
+      '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>',
+    );
+    await File('${iconRoot.path}/unsafe.svg')
+        .writeAsString('<svg><script>alert(1)</script></svg>');
     await File('${outsideRoot.path}/outside.txt').writeAsString('outside');
   });
 
@@ -129,6 +138,36 @@ void main() {
     );
     expect(iconError.statusCode, HttpStatus.notFound);
     _expectSecurityHeaders(iconError);
+  });
+
+  test('serves only approved bounded icons with safe SVG policy', () async {
+    server = _newServer(
+      fixtureRoot,
+      outsideRoot,
+      systemIconRoots: [iconRoot.path],
+    );
+    await server!.startServer();
+
+    final png = await _get(
+      server!,
+      '/system_icons?path=${Uri.encodeComponent('${iconRoot.path}/valid.png')}',
+    );
+    expect(png.statusCode, HttpStatus.ok);
+    expect(png.contentType, 'image/png');
+
+    final svg = await _get(
+      server!,
+      '/system_icons?path=${Uri.encodeComponent('${iconRoot.path}/safe.svg')}',
+    );
+    expect(svg.statusCode, HttpStatus.ok);
+    expect(svg.contentType, 'image/svg+xml');
+    expect(svg.headers['Content-Security-Policy'], contains('sandbox'));
+
+    final unsafeSvg = await _get(
+      server!,
+      '/system_icons?path=${Uri.encodeComponent('${iconRoot.path}/unsafe.svg')}',
+    );
+    expect(unsafeSvg.statusCode, HttpStatus.notFound);
   });
 
   test('returns 404 for a symlink that escapes the frontend root', () async {
@@ -300,6 +339,7 @@ DartServerService _newServer(
   int? maxRequestHeaderBytes,
   int? maxRequestHeaderCount,
   int? maxRequestBodyBytes,
+  Iterable<String>? systemIconRoots,
 }) {
   return DartServerService.forTesting(
     configPath: '${outsideRoot.path}/config.json',
@@ -312,6 +352,7 @@ DartServerService _newServer(
         maxRequestHeaderCount ?? DartServerService.defaultMaxRequestHeaderCount,
     maxRequestBodyBytes:
         maxRequestBodyBytes ?? DartServerService.defaultMaxRequestBodyBytes,
+    systemIconRoots: systemIconRoots ?? [fixtureRoot.path],
   );
 }
 
@@ -352,7 +393,9 @@ Future<_StaticResponse> _get(
     );
     if (origin != null) request.headers.set('Origin', origin);
     final response = await request.close();
-    final body = await utf8.decoder.bind(response).join();
+    final body = await const Utf8Decoder(allowMalformed: true)
+        .bind(response)
+        .join();
     return _StaticResponse(
       response.statusCode,
       body,

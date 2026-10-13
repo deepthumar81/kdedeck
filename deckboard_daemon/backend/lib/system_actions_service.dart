@@ -25,12 +25,120 @@ class SystemActionsService {
   /// Linux roots used both when indexing application icons and when serving
   /// an icon back to the client. Keep this list narrow: the HTTP endpoint
   /// must never turn an arbitrary filesystem path into a readable file.
-  static List<String> get linuxIconRoots => [
-    '/usr/share/icons',
-    '/usr/share/pixmaps',
-    '${Platform.environment['HOME']}/.local/share/icons',
-    '/var/lib/flatpak/exports/share/icons',
-  ];
+  static List<String> get linuxIconRoots =>
+      linuxIconRootsFor(Platform.environment);
+
+  static const _maxSnapPackages = 512;
+  static const _maxIconEntriesPerRoot = 16384;
+  static const _maxIconDepth = 32;
+  static const _maxIconBytes = 4 * 1024 * 1024;
+
+  /// Builds the same narrow allowlist used by icon discovery and HTTP serving.
+  /// [snapRoot] is injectable so package layouts can be tested without /snap.
+  static List<String> linuxIconRootsFor(
+    Map<String, String> environment, {
+    String snapRoot = '/snap',
+  }) {
+    final roots = <String>[];
+    _addIconRoot(roots, '/usr/share/icons', '/usr/share');
+    _addIconRoot(roots, '/usr/share/pixmaps', '/usr/share');
+    _addIconRoot(
+      roots,
+      '/var/lib/flatpak/exports/share/icons',
+      '/var/lib/flatpak',
+    );
+    _addIconRoot(roots, '/var/lib/snapd/desktop/icons', '/var/lib/snapd');
+
+    final home = _absoluteDirectory(environment['HOME']);
+    if (home != null) {
+      _addIconRoot(roots, p.join(home, '.local/share/icons'), home);
+      _addIconRoot(roots, p.join(home, '.local/share/pixmaps'), home);
+    }
+    // XDG_DATA_HOME is a single absolute directory, not the colon-separated
+    // XDG_DATA_DIRS. A missing/relative value falls back to HOME/.local/share.
+    final dataHome =
+        _absoluteDirectory(environment['XDG_DATA_HOME']) ??
+        (home == null ? null : p.join(home, '.local/share'));
+    if (dataHome != null) {
+      _addIconRoot(roots, p.join(dataHome, 'icons'), dataHome);
+      _addIconRoot(roots, p.join(dataHome, 'pixmaps'), dataHome);
+      _addIconRoot(
+        roots,
+        p.join(dataHome, 'flatpak/exports/share/icons'),
+        dataHome,
+      );
+    }
+
+    final snap = _absoluteDirectory(snapRoot);
+    if (snap != null && Directory(snap).existsSync()) {
+      try {
+        // listSync has no streaming synchronous counterpart. Bound the number
+        // of candidates processed and returned, even on a crowded /snap.
+        var inspected = 0;
+        for (final entry in Directory(snap).listSync(followLinks: false)) {
+          if (++inspected > _maxSnapPackages) break;
+          if (entry is! Directory ||
+              !RegExp(r'^[a-z][a-z0-9-]{0,39}$')
+                  .hasMatch(p.basename(entry.path))) {
+            continue;
+          }
+          final package = entry.path;
+          final current = p.join(package, 'current');
+          final gui = p.join(current, 'meta/gui');
+          try {
+            // Only current may point at a revision. Neither the package nor
+            // meta/gui can redirect the approved root outside that revision.
+            final snapCanonical = Directory(snap).resolveSymbolicLinksSync();
+            final packageCanonical = Directory(package)
+                .resolveSymbolicLinksSync();
+            final currentCanonical = Directory(current)
+                .resolveSymbolicLinksSync();
+            final guiCanonical = Directory(gui).resolveSymbolicLinksSync();
+            if (p.isWithin(snapCanonical, packageCanonical) &&
+                p.isWithin(packageCanonical, currentCanonical) &&
+                p.isWithin(currentCanonical, guiCanonical) &&
+                Directory(guiCanonical).existsSync()) {
+              roots.add(gui);
+            }
+          } on FileSystemException {
+            // A missing/broken revision contributes no root.
+          }
+        }
+      } on FileSystemException {
+        // Missing/inaccessible snap mount.
+      }
+    }
+    return List.unmodifiable(roots);
+  }
+
+  static String? _absoluteDirectory(String? value) {
+    if (value == null ||
+        value.isEmpty ||
+        !p.isAbsolute(value) ||
+        p.normalize(value) == '/' ||
+        value.contains('\u0000')) {
+      return null;
+    }
+    return p.normalize(value);
+  }
+
+  static void _addIconRoot(List<String> roots, String root, String anchor) {
+    try {
+      // A present icon directory must stay inside its containing installation
+      // or user-data directory, even if an intermediate component is a link.
+      if (Directory(root).existsSync()) {
+        final canonicalAnchor = Directory(anchor).resolveSymbolicLinksSync();
+        final canonicalRoot = Directory(root).resolveSymbolicLinksSync();
+        if (!p.isWithin(canonicalAnchor, canonicalRoot)) return;
+      } else if (FileSystemEntity.typeSync(root, followLinks: false) ==
+          FileSystemEntityType.link) {
+        return;
+      }
+      if (!roots.contains(root)) roots.add(root);
+    } on FileSystemException {
+      // A present but inaccessible/symlink-escaped root is not approved.
+    }
+  }
 
   static const Map<String, _KdeCommand> _kdeActions = {
     'sleep': _KdeCommand('systemctl', ['suspend']),
@@ -68,23 +176,80 @@ class SystemActionsService {
     commandExecutor = const ProcessCommandExecutor();
   }
 
-  static void _scanDirForIcons(Directory dir, Map<String, String> map) {
-    try {
-      final entities = dir.listSync(followLinks: true);
-      for (var entity in entities) {
-        if (entity is File) {
-          final ext = entity.path.split('.').last.toLowerCase();
-          if (ext == 'png' || ext == 'svg' || ext == 'xpm') {
-            final filename = entity.path.split('/').last;
-            final name = filename.substring(0, filename.lastIndexOf('.'));
-            map[name] = entity.path;
+  /// Indexes only files canonically contained in each supplied icon root.
+  /// Directory links inside a root are followed once, without traversal cycles.
+  static Future<Map<String, String>> indexLinuxIconsForRoots(
+    Iterable<String> roots, {
+    int maxEntriesPerRoot = _maxIconEntriesPerRoot,
+    int maxDepth = _maxIconDepth,
+  }) async {
+    if (maxEntriesPerRoot < 1 || maxDepth < 0) {
+      throw ArgumentError('Icon scan limits must be positive');
+    }
+    final icons = <String, String>{};
+    for (final path in roots) {
+      if (!p.isAbsolute(path)) continue;
+      String canonicalRoot;
+      try {
+        canonicalRoot = await Directory(path).resolveSymbolicLinks();
+      } on FileSystemException {
+        continue;
+      }
+      final pending = <({String path, int depth})>[(path: path, depth: 0)];
+      final visited = <String>{};
+      var inspected = 0;
+      while (pending.isNotEmpty && inspected < maxEntriesPerRoot) {
+        final next = pending.removeLast();
+        String canonicalDir;
+        try {
+          canonicalDir = await Directory(next.path).resolveSymbolicLinks();
+        } on FileSystemException {
+          continue;
+        }
+        if ((canonicalDir != canonicalRoot &&
+                !p.isWithin(canonicalRoot, canonicalDir)) ||
+            !visited.add(canonicalDir)) {
+          continue;
+        }
+        try {
+          await for (final entity in Directory(
+            next.path,
+          ).list(followLinks: false)) {
+            if (++inspected > maxEntriesPerRoot) break;
+            final extension = p.extension(entity.path).toLowerCase();
+            if (entity is! Directory &&
+                entity is! Link &&
+                (entity is! File || !_isIconExtension(extension))) {
+              continue;
+            }
+            try {
+              final canonical = await entity.resolveSymbolicLinks();
+              if (!p.isWithin(canonicalRoot, canonical)) continue;
+              final stat = await FileStat.stat(canonical);
+              if (stat.type == FileSystemEntityType.directory) {
+                if (next.depth < maxDepth) {
+                  pending.add((path: entity.path, depth: next.depth + 1));
+                }
+              } else if (stat.type == FileSystemEntityType.file &&
+                  stat.size <= _maxIconBytes &&
+                  _isIconExtension(extension) &&
+                  _isIconExtension(p.extension(canonical).toLowerCase())) {
+                icons[p.basenameWithoutExtension(entity.path)] = entity.path;
+              }
+            } on FileSystemException {
+              // Skip broken links and entries removed during discovery.
+            }
           }
-        } else if (entity is Directory) {
-          _scanDirForIcons(entity, map);
+        } on FileSystemException {
+          // Unreadable directory: continue with other roots.
         }
       }
-    } catch (_) {}
+    }
+    return icons;
   }
+
+  static bool _isIconExtension(String extension) =>
+      extension == '.png' || extension == '.svg' || extension == '.xpm';
 
   static Future<String> _getDisplayOutput(CommandExecutor executor) async {
     if (_cachedDisplayOutput != null) return _cachedDisplayOutput!;
@@ -484,14 +649,7 @@ class SystemActionsService {
     if (Platform.isLinux && allIconNames.isNotEmpty) {
       if (_iconCache == null) {
         final sw = Stopwatch()..start();
-        _iconCache = {};
-        final paths = linuxIconRoots;
-        for (var path in paths) {
-          final dir = Directory(path);
-          if (dir.existsSync()) {
-            _scanDirForIcons(dir, _iconCache!);
-          }
-        }
+        _iconCache = await indexLinuxIconsForRoots(linuxIconRoots);
         print(
           "✅ [SystemActionsService] Indexed ${_iconCache!.length} icons in ${sw.elapsedMilliseconds}ms",
         );
