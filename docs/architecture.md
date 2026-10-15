@@ -43,16 +43,19 @@ Go tray (optional)
                     +<-- Wi-Fi/LAN --> Flutter Android/iOS client
 ```
 
-The phone stores connection profiles in `SharedPreferences`, connects to
-`ws://<host>:8484/ws`, receives `init_state`, renders board maps, and sends
-actions or configuration changes. Connection retry is a four-second timer in
+The phone stores connection profiles in `SharedPreferences`, uses a loopback
+exception or HTTPS/WSS for remote endpoints, pairs before receiving state, and
+then connects to `<scheme>://<host>:8484/ws`. It receives `init_state`, renders
+board maps, and sends actions or configuration changes. Connection retry is a
+four-second timer in
 [`websocket_service.dart`](../kdedeck_mobile/lib/services/websocket_service.dart#L163-L177).
 
 ### Standalone daemon plus browser
 
-The daemon binds `InternetAddress.anyIPv4` on port `8484` and routes `/ws` to
-WebSocket upgrade, `/` and other paths to `../frontend`, and
-`/system_icons` to a file response ([`dart_server_service.dart`](../deckboard_daemon/backend/lib/dart_server_service.dart#L49-L114)).
+The daemon defaults to a loopback bind on port `8484`; LAN exposure is opt-in
+and requires valid TLS credentials. It routes `/ws` to WebSocket upgrade, `/`
+and other paths to `../frontend`, and `/system_icons` to a validated icon
+response ([`dart_server_service.dart`](../deckboard_daemon/backend/lib/dart_server_service.dart#L49-L114)).
 The browser opens one WebSocket, requests installed apps, edits an in-memory
 copy, and sends `save_config` ([`app.js`](../deckboard_daemon/frontend/app.js#L1-L95)).
 
@@ -211,29 +214,26 @@ and the embedded Linux-only equivalent
 
 ## Current limitations and risks
 
-- There is no authentication or transport encryption. The server binds all
-  IPv4 interfaces, always sends `"pin_required": false`, and the client-side
-  PIN is only stored/displayed configuration; it is never checked
-  ([`dart_server_service.dart`](../deckboard_daemon/backend/lib/dart_server_service.dart#L140-L151),
-  [`websocket_service.dart`](../kdedeck_mobile/lib/services/websocket_service.dart#L8-L18)).
-- `launch_app`, custom KDE actions, and `/system_icons?path=` can expose or
-  execute powerful host operations. The icon route accepts a caller-provided
-  filesystem path and has no allowlist.
-- Action state is optimistic: volume, brightness, and mute state are updated
-  and broadcast without checking the result returned by the host action.
-- Metrics defaults include CPU/GPU values, but the current polling code only
-  refreshes RAM; CPU/GPU values are not collected. Metrics changes are not
-  broadcast as their own message, so connected clients primarily see them at
-  `init_state`.
-- The client sends `set_metrics_enabled`, but neither server implementation
-  handles it. `state_poll` is parsed by the client but has no current server
-  producer. The web UI accepts `config_sync`, but the server sends
-  `init_state`/`config_updated` instead.
-- Standalone and embedded servers differ in config validation, persistence,
-  app discovery, icon HTTP serving, KDE actions, and MPRIS implementation.
-- The baseline backend test still tests the generated `calculate()` sample
-  function ([`backend_test.dart`](../deckboard_daemon/backend/test/backend_test.dart#L1-L8));
-  there are no protocol or integration tests.
+- Standalone and embedded servers still differ in config validation, persistence,
+  app discovery, icon HTTP serving, KDE actions, and MPRIS implementation. They
+  must be converged behind a shared protocol/core policy before the embedded
+  server is treated as equivalent to the standalone daemon.
+- Certificate provisioning, fingerprint trust, expiry/rotation UX, and physical
+  LAN verification are not implemented. Clients intentionally use normal
+  certificate and hostname validation and do not accept every certificate.
+- The embedded desktop server needs explicit startup/bind coverage. Remote
+  embedded binds require valid TLS, while desktop configurator operation should
+  remain a reliable loopback flow.
+- Windows and macOS system-action adapters and application discovery remain
+  TODOs; compiling the Flutter or Dart projects on those platforms is not
+  considered feature parity.
+- Local approval/role selection, administrative revocation UI, production
+  session persistence policy, process-tree ownership, and restrictive config
+  permission verification remain pending.
+- Browser end-to-end tests, physical Android/Linux QA, CI, packaging, upgrade,
+  migration, signed-artifact, and rollback checks remain incomplete.
+- Metrics and capability reporting still need an explicit audit so clients do
+  not present fabricated or unsupported host capabilities.
 
 ## Future boundary design
 

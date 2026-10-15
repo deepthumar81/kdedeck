@@ -2,7 +2,10 @@
 
 **Turn an old Android phone into a Stream Deck for Linux. $0.**
 
-KDE Deck is an open-source macro pad / deck controller for **Linux (KDE Plasma 6, Wayland & X11)**. Instead of paying Elgato money, you run a lightweight server on your PC and drive it from your phone: launch apps, control media, slide volume and brightness, ring your phone, manage windows — a full remote for your Linux box, built from scratch.
+KDE Deck is an open-source macro pad / deck controller for **Linux (KDE Plasma 6, Wayland & X11)**. Instead of paying Elgato money, you run a lightweight server on your PC and drive it from your phone: launch approved apps, control media, slide volume and brightness, ring your phone, manage windows — a full remote for your Linux box, built from scratch.
+
+The current release line is Linux-first. Windows and macOS support are planned
+platform adapters, not supported system-control backends yet.
 
 ![Demo video](assets/demo.mp4)
 
@@ -35,11 +38,20 @@ We provide fully compiled, standalone binaries.
 
 ### 1. The Linux Backend
 1. Download the compiled `kdedeck_daemon` executable.
-2. Run it via your terminal or double-click it.
+2. Run it from a terminal on the Linux PC:
    ```bash
    ./kdedeck_daemon
    ```
-3. The server will start silently on port `8484`.
+3. By default, the daemon listens on loopback only and still requires a paired
+   WebSocket client. Use `--pair` in the same terminal to create a one-time
+   pairing code, or `--version` to inspect the artifact without starting a
+   listener.
+
+For phone/LAN access, configure `allow_lan: true` and provide a certificate and
+matching private key through `KDEDECK_TLS_CERT_FILE` and
+`KDEDECK_TLS_KEY_FILE`. LAN mode requires HTTPS/WSS; it does not fall back to
+plaintext HTTP/WS. See [`docs/security/tls-setup.md`](docs/security/tls-setup.md)
+before exposing the daemon beyond the local machine.
 
 To inspect the daemon release identity without starting a listener:
 
@@ -50,12 +62,21 @@ To inspect the daemon release identity without starting a listener:
 ### 2. The Android Frontend
 1. Download the `app-release.apk` file to your Android phone.
 2. Install the APK.
-3. Open the app, slide open the menu, and enter your PC's IP address (e.g., `192.168.1.50`).
+3. Open the app, create a connection profile, and choose a secure HTTPS/WSS
+   connection for a LAN address such as `192.168.1.50`.
+4. Pair using the one-time code from the daemon's local terminal. The app stores
+   only the issued bearer token in platform secure storage.
+
+For a self-signed certificate, the phone must trust the certificate through a
+separately verified provisioning process. KDE Deck does not disable certificate
+validation or accept every certificate.
 
 ### 3. The Web Configurator
 1. On your PC, open a web browser.
-2. Navigate to `http://localhost:8484`.
-3. Use the Drag & Drop interface to customize your button grid!
+2. Navigate to `http://localhost:8484` for a loopback daemon, or the matching
+   `https://<certificate-hostname>:8484` URL for a TLS-enabled LAN daemon.
+3. Pair the browser when prompted, then use the drag-and-drop interface to
+   customize your button grid.
 
 ---
 
@@ -63,13 +84,20 @@ To inspect the daemon release identity without starting a listener:
 
 Are we bringing this to Windows and Mac? **Yes!** Our architecture is perfectly suited for it.
 
-Because we built the mobile app in Flutter, the frontend is already 100% cross-platform compatible with iOS and Android. Because we built the backend in Dart, the server logic compiles natively into `.exe` (Windows) and Mach-O (macOS) binaries.
+Because we built the mobile app in Flutter, the client UI is structured for
+Android, iOS, and desktop builds. Because we built the backend in Dart, the
+server core can compile for `.exe` (Windows) and Mach-O (macOS) binaries.
+Compilation alone is not platform parity: the native system-action adapters
+and application discovery for those platforms are still pending.
 
-Currently, the backend's `SystemActionsService` uses Linux-specific commands (like `dbus-send` and parsing `/usr/share/applications`). In the near future, we will simply inject platform-specific branches into this single service:
+Currently, the backend's `SystemActionsService` uses Linux-specific commands
+(like `dbus-send` and parsing `/usr/share/applications`). Future work must add
+tested platform adapters for:
 * **Windows:** Parsing the Start Menu and hooking into the Windows Media API.
 * **macOS:** Hooking into AppleScript for media controls.
 
-The core server, UI, and WebSocket protocols will remain completely untouched!
+The goal is to preserve the existing UI and WebSocket protocol while exposing
+capabilities explicitly where an operating system does not support an action.
 
 ---
 

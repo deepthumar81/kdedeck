@@ -1,21 +1,22 @@
 # KDE Deck - Project Roadmap & Plan 🗺️
 
-**Current Version**: `v2.0.0` (Dart/Flutter Architecture)  
+**Current Version**: `main` after `v3.5.0` (Linux-first hardened development line)
 **License**: MIT  
 **Target Platform**: Linux (KDE Plasma on Wayland & X11)  
 *Future Platforms: Windows & macOS*
 
 ---
 
-## 🎯 Active Features List (v2.0.0)
+## 🎯 Active Features (current development line)
 
 * 📱 **Native Mobile Experience**: Android (and iOS-ready) Flutter app with Neumorphic UI, touch haptic feedback, and dynamic layout scaling.
 * ⚡ **Ultra-Low Memory Footprint**: Runs on a compiled Ahead-Of-Time (AOT) Dart daemon backend consuming extremely minimal RAM.
 * 👈👉 **Multi-Board Swipe Navigation**: Unlimited deck pages. Supports touch swipe on phone to switch between functional boards.
-* 📦 **Universal Linux App Scanner**: Scans Debian/APT (`/usr/share/applications`) and Flatpak (`/var/lib/flatpak/exports`) desktop entries natively.
+* 📦 **Linux App Scanner**: Scans Debian/APT, Flatpak, and Snap desktop entries natively, with approved application identities for launches.
 * 🖼️ **Native Desktop App Icons**: Directly parses and streams high-resolution PNG/SVG icons from Linux system icon themes.
 * 🎵 **MPRIS Integration**: Universal media controls (Spotify/VLC/Browser) natively executed via D-Bus (`org.mpris.MediaPlayer2`).
-* 🖥️ **Web UI Configurator**: Drag & drop configuration panel served over local HTTP on port `8484`.
+* 🖥️ **Web UI Configurator**: Authenticated drag & drop configuration panel served by the daemon on port `8484`.
+* 🔐 **Hardened Transport**: Pairing, bearer sessions, revocation, request limits, loopback-safe defaults, and TLS/WSS for LAN access.
 
 ---
 
@@ -28,9 +29,12 @@
 
 ---
 
-## 🔮 Upcoming Roadmap (v2.1.0+)
+## 🔮 Upcoming Roadmap
 
-- [ ] **Windows & macOS Port**: Implement `Platform.isWindows` and `Platform.isMacOS` OS bridges in `SystemActionsService.dart` to support Windows Start Menu / Media APIs and macOS AppleScript.
-- [ ] **Custom Icon File Upload**: Upload local PNG/SVG icon images for custom buttons via the Web UI.
-- [ ] **OBS Studio Scene Switcher Plugin**: Built-in OBS WebSocket plugin tab with live scene preview.
-- [ ] **System Hardware Monitoring**: Real-time CPU, RAM, and GPU temperature touch tiles pulling from native metrics.
+- [ ] **Desktop/LAN readiness**: Complete embedded/standalone server convergence, certificate trust provisioning, physical-device QA, and desktop startup reliability.
+- [ ] **Release engineering**: Add CI, packaging, clean-install/upgrade tests, signed artifacts, migrations, rollback, and synchronized release metadata.
+- [ ] **Windows & macOS adapters**: Implement tested volume, mute, brightness, media, application discovery, launching, and capability reporting.
+- [ ] **Client UX**: Improve onboarding, connection profiles, accessibility, drag/drop, undo, and unsupported-feature messaging.
+- [ ] **Custom Icon File Upload**: Keep bounded PNG/SVG upload and validation available through the Web UI.
+- [ ] **OBS Studio Scene Switcher Plugin**: Add only after the security and UX baseline is accepted.
+- [ ] **System Hardware Monitoring**: Replace placeholder metrics with verified native measurements before exposing them as controls.
