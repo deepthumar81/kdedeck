@@ -2608,3 +2608,39 @@ missing path.
 - Replaced the absolute local `file://` URL with the official Gradle 9.3.1
   distribution URL at `services.gradle.org`.
 - Kept the Gradle version unchanged; only the non-reproducible path was fixed.
+
+## Step 67 — Add verified Flutter certificate trust and explicit rotation
+
+### Goal
+
+Allow a phone user to provision a self-signed server certificate without
+weakening TLS hostname or validity checks, and make certificate rotation an
+explicit re-trust and re-pair operation.
+
+### Changes
+
+- Added endpoint-scoped certificate storage backed by the same platform secure
+  storage family as bearer credentials; certificates are never placed in shared
+  preferences or logs.
+- Added fingerprint-checked PEM trust import. The WSS connector adds only the
+  explicitly supplied certificate to its trust context and leaves normal
+  platform hostname and certificate validity checks enabled.
+- Added a connection-screen trust dialog that requires a separately verified
+  SHA-256 fingerprint. A changed certificate is rejected unless the user checks
+  the explicit replacement control; replacement deletes the old bearer token so
+  pairing must happen again.
+- Added service tests for fingerprint mismatch, endpoint storage, and rotation
+  behavior. Existing untrusted-certificate coverage remains in place.
+
+### Verification
+
+- Flutter WebSocket service suite: **PASS**, 40 tests.
+- `flutter pub get`: **PASS** with the existing lockfile; `crypto` is now a
+  direct pinned dependency.
+
+### Scope boundary
+
+Platform TLS performs hostname and expiry validation, but physical Android trust,
+expiry/hostname fixture coverage, and LAN verification remain pending. The
+connection screen accepts a certificate pasted from a separately trusted local
+channel; it never accepts a certificate silently from the failed network path.

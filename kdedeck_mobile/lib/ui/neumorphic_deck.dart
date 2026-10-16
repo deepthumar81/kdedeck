@@ -35,6 +35,8 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
   int _activePageIndex = 0;
   final _pairingCodeController = TextEditingController();
   final _embeddedTokenController = TextEditingController();
+  final _certificateController = TextEditingController();
+  final _fingerprintController = TextEditingController();
   bool _showEmbeddedToken = false;
   bool _conflictDialogShown = false;
 
@@ -51,6 +53,8 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
     _sliderDebounceTimer?.cancel();
     _pairingCodeController.dispose();
     _embeddedTokenController.dispose();
+    _certificateController.dispose();
+    _fingerprintController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -89,6 +93,84 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
       default:
         return 'Unable to pair. Check the PC and try again.';
     }
+  }
+
+  Future<void> _trustCertificate(WebSocketService ws) async {
+    _certificateController.clear();
+    _fingerprintController.clear();
+    var replace = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Trust verified certificate'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Compare the SHA-256 fingerprint with the value shown on the PC through a separate trusted channel. Never trust a certificate from the network connection you are trying to secure.',
+                ),
+                TextField(
+                  controller: _fingerprintController,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: 'SHA-256 fingerprint',
+                  ),
+                ),
+                TextField(
+                  controller: _certificateController,
+                  maxLines: 8,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: 'PEM certificate',
+                  ),
+                ),
+                CheckboxListTile(
+                  value: replace,
+                  onChanged: (value) =>
+                      setDialogState(() => replace = value ?? false),
+                  title: const Text('Replace an existing certificate'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                try {
+                  await ws.trustServerCertificate(
+                    _certificateController.text.trim(),
+                    expectedFingerprint: _fingerprintController.text.trim(),
+                    replace: replace,
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  ws.connect();
+                } on CertificateRotationRequired {
+                  setDialogState(() => replace = true);
+                } on FormatException {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Certificate or fingerprint is invalid.')),
+                  );
+                } catch (_) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Certificate could not be stored securely.')),
+                  );
+                }
+              },
+              child: const Text('Trust certificate'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showConfigConflict(WebSocketService ws) {
@@ -654,6 +736,11 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                  const SizedBox(height: 8),
                  Text(error, key: const Key('pairingError'), style: const TextStyle(color: Color(0xFFEF4444)), textAlign: TextAlign.center),
                ],
+                if (ws.secureConnection && ws.authError == 'connection_failed')
+                  TextButton(
+                    onPressed: () => _trustCertificate(ws),
+                    child: const Text('Trust a verified certificate'),
+                  ),
                if (ws.configError != null && !ws.configConflict)
                  const Text('Could not update the configuration.', style: TextStyle(color: Color(0xFFEF4444))),
                if (ws.configConflict)

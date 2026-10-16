@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kdedeck_mobile/services/credential_store.dart';
 import 'package:kdedeck_mobile/services/websocket_service.dart';
@@ -32,6 +33,20 @@ class MemoryCredentials implements CredentialStore {
     if (blockedDelete != null) await blockedDelete!.future;
     values.remove(key);
   }
+}
+
+class MemoryCertificates implements CertificateTrustStore {
+  final values = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String certificatePem) async =>
+      values[key] = certificatePem;
+
+  @override
+  Future<void> delete(String key) async => values.remove(key);
 }
 
 class FakeSink implements WebSocketSink {
@@ -82,6 +97,7 @@ Future<void> settle() => Future<void>.delayed(const Duration(milliseconds: 10));
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late MemoryCredentials credentials;
+  late MemoryCertificates certificates;
   late List<FakeChannel> sockets;
   late List<Uri> urls;
   late WebSocketService service;
@@ -89,10 +105,12 @@ void main() {
   WebSocketService makeService({
     bool autoConnect = false,
     SocketConnector? connector,
+    TrustedSocketConnector? trustedConnector,
     Duration timeout = const Duration(milliseconds: 40),
   }) {
     return WebSocketService(
       credentialStore: credentials,
+      certificateTrustStore: certificates,
       autoConnect: autoConnect,
       manageWakelock: false,
       readyTimeout: timeout,
@@ -103,12 +121,14 @@ void main() {
             sockets.add(socket);
             return socket;
           },
+      trustedConnector: trustedConnector,
     );
   }
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     credentials = MemoryCredentials();
+    certificates = MemoryCertificates();
     sockets = [];
     urls = [];
     service = makeService();
@@ -159,6 +179,72 @@ void main() {
       'protocol_version': 1,
       'token': 'issued-bearer',
     });
+  });
+
+  test('certificate trust requires a matching fingerprint', () async {
+    const certificate =
+        '-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----';
+    final fingerprint =
+        sha256.convert(base64Decode('QQ==')).toString().toUpperCase();
+
+    await service.trustServerCertificate(
+      certificate,
+      expectedFingerprint: 'SHA256:${fingerprint.toLowerCase()}',
+    );
+    expect(certificates.values['ws://127.0.0.1:8484'], certificate);
+    expect(service.certificateFingerprint, fingerprint);
+    await expectLater(
+      service.trustServerCertificate(
+        certificate,
+        expectedFingerprint: 'SHA256:${'0' * 64}',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('certificate rotation is explicit and drops the old bearer', () async {
+    const first =
+        '-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----';
+    const second =
+        '-----BEGIN CERTIFICATE-----\nQg==\n-----END CERTIFICATE-----';
+    await service.trustServerCertificate(first);
+    credentials.values['ws://127.0.0.1:8484'] = 'old-bearer';
+
+    await expectLater(
+      service.trustServerCertificate(second),
+      throwsA(isA<CertificateRotationRequired>()),
+    );
+    expect(certificates.values['ws://127.0.0.1:8484'], first);
+    await service.trustServerCertificate(second, replace: true);
+    expect(certificates.values['ws://127.0.0.1:8484'], second);
+    expect(credentials.values, isEmpty);
+  });
+
+  test('stored certificate is used before authentication', () async {
+    const certificate =
+        '-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----';
+    certificates.values['wss://localhost:8484'] = certificate;
+    String? usedCertificate;
+    service.dispose();
+    service = makeService(
+      trustedConnector: (uri, pem) {
+        expect(uri.scheme, 'wss');
+        usedCertificate = pem;
+        final socket = FakeChannel();
+        sockets.add(socket);
+        return socket;
+      },
+    )
+      ..serverIp = 'localhost'
+      ..secureConnection = true;
+
+    service.connect();
+    await settle();
+    expect(usedCertificate, certificate);
+    expect(urls, isEmpty);
+    sockets.last.receive({'type': 'auth_required'});
+    await settle();
+    expect(service.authRequired, isTrue);
   });
 
   test('auth_success alone does not expose deck or permit actions', () async {

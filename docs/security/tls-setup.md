@@ -57,8 +57,15 @@ profiles default to **Secure connection (WSS / HTTPS)**. Certificate trust and
 hostname checks are performed by the platform; there is no accept-any-certificate
 option or downgrade to plaintext. A self-signed certificate without provisioned
 trust will show a connection failure **before any pairing code/token is sent**.
-An in-app fingerprint/trust provisioning workflow is not implemented yet;
-provisioning remains an operator/device trust-store operation.
+If the phone's platform trust store does not contain the issuer, the connection
+screen offers **Trust a verified certificate** after the first WSS failure. Paste
+the PEM certificate and the `SHA256:` fingerprint from `server.sha256`. The app
+checks that the pasted certificate has that fingerprint, stores it in endpoint-
+scoped secure storage, and still uses the platform's normal hostname and
+validity-period checks. It sends no pairing credential during the failed
+handshake. A different certificate is rejected until **Replace an existing
+certificate** is explicitly selected; replacing also discards the old bearer
+token and requires pairing again.
 
 Start the standalone daemon with `--pair` in its local interactive terminal, then
 enter that one-time code in the app's **Pair with code** field. Successful pairing
@@ -100,6 +107,8 @@ Tests require OpenSSL on the test host; production uses Dart's TLS implementatio
 - User-friendly certificate provisioning and verified server-identity workflow.
 - Verified trust/fingerprint provisioning and device keystore upgrade testing.
 - Physical Android/Linux LAN pairing and icon/editor end-to-end tests.
-- Certificate expiry/rotation UX and hostname/expiry rejection fixtures.
+- Expiry/hostname rejection fixtures and physical LAN verification remain open;
+  the platform TLS stack performs those checks in the client and the automated
+  suite covers the trust-before-auth and rotation boundaries.
 - Certificate provisioning/fingerprint workflow for standalone and embedded
   servers, plus physical LAN verification.

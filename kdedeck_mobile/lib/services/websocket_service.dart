@@ -2,14 +2,29 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 
 import 'credential_store.dart';
 
 typedef SocketConnector = WebSocketChannel Function(Uri uri);
+typedef TrustedSocketConnector = WebSocketChannel Function(
+  Uri uri,
+  String certificatePem,
+);
+
+class CertificateRotationRequired implements Exception {
+  const CertificateRotationRequired(this.currentFingerprint);
+
+  final String currentFingerprint;
+
+  @override
+  String toString() => 'Certificate rotation requires explicit replacement';
+}
 
 class _Endpoint {
   _Endpoint(this.host, this.port, this.secure) {
@@ -73,19 +88,26 @@ class WebSocketService extends ChangeNotifier {
 
   WebSocketService({
     CredentialStore? credentialStore,
+    CertificateTrustStore? certificateTrustStore,
     SocketConnector? connector,
+    TrustedSocketConnector? trustedConnector,
     bool autoConnect = true,
     bool manageWakelock = true,
     Duration readyTimeout = const Duration(seconds: 8),
   })  : _credentialStore = credentialStore ?? SecureCredentialStore(),
+        _certificateTrustStore =
+            certificateTrustStore ?? SecureCertificateTrustStore(),
         _connector = connector ?? WebSocketChannel.connect,
+        _trustedConnector = trustedConnector ?? _connectWithTrustedCertificate,
         _manageWakelock = manageWakelock,
         _readyTimeout = readyTimeout {
     if (autoConnect) unawaited(_loadSettingsAndConnect());
   }
 
   final CredentialStore _credentialStore;
+  final CertificateTrustStore _certificateTrustStore;
   final SocketConnector _connector;
+  final TrustedSocketConnector _trustedConnector;
   final bool _manageWakelock;
   final Duration _readyTimeout;
   WebSocketChannel? _channel;
@@ -108,6 +130,7 @@ class WebSocketService extends ChangeNotifier {
   bool authenticated = false;
   bool authRequired = false;
   String? authError;
+  String? certificateFingerprint;
   String status = 'disconnected';
   bool pinRequired = false;
   bool isBatterySaverMode = false;
@@ -328,6 +351,46 @@ class WebSocketService extends ChangeNotifier {
   /// Exchange a one-time standalone pairing code for an issued bearer token.
   Future<void> pairWithCode(String code) => _pair(code, code: true);
 
+  /// Trust a certificate only after the caller has independently verified its
+  /// fingerprint. Replacing an existing certificate is always explicit.
+  Future<void> trustServerCertificate(
+    String certificatePem, {
+    String? expectedFingerprint,
+    bool replace = false,
+  }) async {
+    final fingerprint = _certificateFingerprint(certificatePem);
+    if (expectedFingerprint != null &&
+        _normalizeFingerprint(expectedFingerprint) != fingerprint) {
+      throw const FormatException('Certificate fingerprint mismatch');
+    }
+    final key = _serverKey;
+    final previous = await _certificateTrustStore.read(key);
+    if (previous != null) {
+      final previousFingerprint = _certificateFingerprint(previous);
+      if (previousFingerprint != fingerprint && !replace) {
+        throw CertificateRotationRequired(previousFingerprint);
+      }
+    }
+    await _certificateTrustStore.write(key, certificatePem);
+    certificateFingerprint = fingerprint;
+    authError = null;
+    if (replace) {
+      try {
+        await _credentialStore.delete(key);
+      } catch (_) {
+        authError = 'credential_unavailable';
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> clearTrustedCertificate() async {
+    final key = _serverKey;
+    await _certificateTrustStore.delete(key);
+    certificateFingerprint = null;
+    notifyListeners();
+  }
+
   Future<void> _pair(String value, {required bool code}) async {
     if (value.isEmpty || value.length > 512) {
       authError = 'invalid_credentials';
@@ -467,7 +530,13 @@ class WebSocketService extends ChangeNotifier {
 
   Future<void> _open(int generation, _Endpoint endpoint) async {
     try {
-      final channel = _connector(endpoint.uri);
+      final trustedCertificate = endpoint.secure
+          ? await _certificateTrustStore.read(endpoint.key)
+          : null;
+      if (_disposed || generation != _generation) return;
+      final channel = trustedCertificate == null
+          ? _connector(endpoint.uri)
+          : _trustedConnector(endpoint.uri, trustedCertificate);
       if (_disposed || generation != _generation) {
         _closeChannel(channel);
         return;
@@ -523,6 +592,40 @@ class WebSocketService extends ChangeNotifier {
       _handleDisconnect(generation, _channel);
     }
   }
+
+  static WebSocketChannel _connectWithTrustedCertificate(
+    Uri uri,
+    String certificatePem,
+  ) {
+    final context = SecurityContext(withTrustedRoots: true)
+      ..setTrustedCertificatesBytes(utf8.encode(certificatePem));
+    final client = HttpClient(context: context);
+    return IOWebSocketChannel.connect(uri, customClient: client);
+  }
+
+  static List<int> _certificateDerBytes(String certificatePem) {
+    final match = RegExp(
+      r'-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----',
+      dotAll: true,
+    ).firstMatch(certificatePem);
+    if (match == null) throw const FormatException('Invalid certificate PEM');
+    try {
+      return base64Decode(match.group(1)!.replaceAll(RegExp(r'\s+'), ''));
+    } catch (_) {
+      throw const FormatException('Invalid certificate PEM');
+    }
+  }
+
+  static String _certificateFingerprint(String certificatePem) => sha256
+      .convert(_certificateDerBytes(certificatePem))
+      .toString()
+      .toUpperCase();
+
+  static String _normalizeFingerprint(String value) => value
+      .replaceFirst(RegExp(r'^SHA256:', caseSensitive: false), '')
+      .replaceAll(':', '')
+      .replaceAll(RegExp(r'\s+'), '')
+      .toUpperCase();
 
   void _handleDisconnect(int generation, WebSocketChannel? channel) {
     if (_disposed || generation != _generation) return;

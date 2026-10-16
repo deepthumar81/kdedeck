@@ -22,6 +22,20 @@ class _Credentials implements CredentialStore {
   Future<void> delete(String key) async => values.remove(key);
 }
 
+class _Certificates implements CertificateTrustStore {
+  final values = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String certificatePem) async =>
+      values[key] = certificatePem;
+
+  @override
+  Future<void> delete(String key) async => values.remove(key);
+}
+
 Future<void> _until(bool Function() condition) async {
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (!condition()) {
@@ -162,5 +176,89 @@ void main() {
     expect(requests, 0);
     expect(credentials.reads, 0);
     expect(credentials.values, isEmpty);
+  });
+
+  test('verified self-signed WSS certificate reaches auth', () async {
+    final directory =
+        await Directory.systemTemp.createTemp('kdedeck-client-trusted-tls-');
+    addTearDown(() => directory.delete(recursive: true));
+    final certificate = '${directory.path}/fixture.crt';
+    final key = '${directory.path}/fixture.key';
+    final process = await Process.start('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-days',
+      '1',
+      '-subj',
+      '/CN=localhost',
+      '-addext',
+      'subjectAltName=DNS:localhost',
+      '-keyout',
+      key,
+      '-out',
+      certificate,
+    ]);
+    final stdout = process.stdout.drain<void>();
+    final stderr = process.stderr.drain<void>();
+    try {
+      expect(await process.exitCode.timeout(const Duration(seconds: 10)), 0);
+      await Future.wait([stdout, stderr]);
+    } finally {
+      process.kill();
+      await process.exitCode;
+    }
+    final context = SecurityContext(withTrustedRoots: false)
+      ..useCertificateChain(certificate)
+      ..usePrivateKey(key);
+    final server =
+        await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
+    final sockets = <WebSocket>[];
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      sockets.add(socket);
+      socket.add(jsonEncode({'type': 'auth_required'}));
+    });
+    final credentials = _Credentials();
+    final certificates = _Certificates();
+    final client = WebSocketService(
+      autoConnect: false,
+      manageWakelock: false,
+      credentialStore: credentials,
+      certificateTrustStore: certificates,
+    )
+      ..serverIp = 'localhost'
+      ..serverPort = server.port
+      ..secureConnection = true;
+    addTearDown(() async {
+      client.dispose();
+      for (final socket in sockets) {
+        await socket.close();
+      }
+      await server.close(force: true);
+    });
+    await client.trustServerCertificate(await File(certificate).readAsString());
+    client.connect();
+    await _until(() => client.authRequired);
+    expect(client.authError, isNull);
+    expect(credentials.values, isEmpty);
+
+    final mismatched = WebSocketService(
+      autoConnect: false,
+      manageWakelock: false,
+      credentialStore: _Credentials(),
+      certificateTrustStore: certificates,
+    )
+      ..serverIp = '127.0.0.1'
+      ..serverPort = server.port
+      ..secureConnection = true;
+    addTearDown(mismatched.dispose);
+    await mismatched
+        .trustServerCertificate(await File(certificate).readAsString());
+    mismatched.connect();
+    await _until(() => mismatched.authError == 'connection_failed');
+    expect(mismatched.authRequired, isFalse);
   });
 }
