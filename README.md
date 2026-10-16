@@ -174,6 +174,20 @@ daemon never downgrades LAN mode to plaintext.
 The container is a daemon deployment target, not an Android build image and
 not a replacement for the host-integrated Flutter desktop or Go tray builds.
 
+### Reproducibility checklist
+
+- [x] **Dependency lockfiles:** committed `deckboard_daemon/backend/pubspec.lock`,
+  `kdedeck_mobile/pubspec.lock`, and `deckboard_daemon/tray/go.sum` pin the
+  Dart, Flutter, and Go dependencies used by this repository.
+- [x] **No machine-specific absolute paths:** tracked source, documentation,
+  and the checked-in sample configuration contain no paths from the developer's
+  workstation. Runtime host paths are supplied by the operating system or
+  environment variables instead.
+- [x] **Pinned runtimes:** `.nvmrc`, `go.mod`, the Flutter project metadata,
+  and the pinned Dart Docker image record the supported toolchain versions.
+- [x] **Reproducible checks:** `make test` is the single repository test entry
+  point after dependencies have been installed.
+
 ### Deployment checklist
 
 1. Run `make test`.
