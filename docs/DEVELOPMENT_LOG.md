@@ -2583,3 +2583,28 @@ The following run showed that `android-actions/setup-android@v3` still installs
 its legacy default package `tools`, which is no longer available in the Android
 repository. The action now receives `packages: ''`; the next step installs only
 the pinned platform and build-tools packages required by this project.
+
+## Step 66 — Restore a portable Gradle wrapper distribution URL
+
+### Goal
+
+Make the Android release build work on a clean runner rather than depending on
+the developer workstation's Gradle cache.
+
+### Reproduced failure
+
+The GitHub artifact job failed during `flutter build apk --release` because the
+committed Gradle wrapper configuration referenced:
+
+```text
+file:///home/kaily/.gradle/wrapper/dists/gradle-9.3.1-all/...
+```
+
+The runner could not open that machine-specific local file and retried the same
+missing path.
+
+### Changes
+
+- Replaced the absolute local `file://` URL with the official Gradle 9.3.1
+  distribution URL at `services.gradle.org`.
+- Kept the Gradle version unchanged; only the non-reproducible path was fixed.
