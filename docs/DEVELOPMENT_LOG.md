@@ -2578,3 +2578,8 @@ environment issue directly.
 
 The next run reached `Set up Android SDK tools` but that action failed before
 the package-install step; the artifact job now provisions its JDK explicitly.
+
+The following run showed that `android-actions/setup-android@v3` still installs
+its legacy default package `tools`, which is no longer available in the Android
+repository. The action now receives `packages: ''`; the next step installs only
+the pinned platform and build-tools packages required by this project.

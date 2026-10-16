@@ -96,6 +96,8 @@ jobs:
 
       - name: Set up Android SDK tools
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install Android SDK packages
         run: |
