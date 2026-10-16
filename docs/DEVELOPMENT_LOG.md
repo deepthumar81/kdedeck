@@ -2560,6 +2560,8 @@ Android platform 36 and build-tools 36.0.0 installed.
 
 - Added an explicit `sdkmanager` step to install `platforms;android-36` and
   `build-tools;36.0.0` before the artifact build.
+- Added `android-actions/setup-android@v3` so the command-line tools are present
+  and the SDK manager path is deterministic on the hosted runner.
 - Updated the README to document that the CI workflow provisions the pinned
   Android SDK packages.
 
@@ -2567,3 +2569,7 @@ Android platform 36 and build-tools 36.0.0 installed.
 
 - Local `flutter build apk --release`: **PASS**, 53.8 MB APK generated.
 - The corrected workflow remains to be observed on a new GitHub Actions run.
+
+The first corrected run reached the SDK step but failed with exit code 127
+because `sdkmanager` was not on `PATH`; this follow-up addresses that runner
+environment issue directly.

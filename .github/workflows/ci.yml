@@ -88,9 +88,12 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v3
+
       - name: Install Android SDK packages
         run: |
-          sdkmanager --sdk_root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}" \
+          sdkmanager \
             "platforms;android-36" \
             "build-tools;36.0.0"
 
