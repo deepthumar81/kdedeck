@@ -88,6 +88,12 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --sdk_root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
       - name: Install locked dependencies
         run: |
           dart pub get --directory deckboard_daemon/backend --enforce-lockfile

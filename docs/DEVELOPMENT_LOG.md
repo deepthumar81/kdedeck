@@ -2541,3 +2541,29 @@ only flushed file contents.
 
 The barrier covers POSIX directory durability. Windows replacement/ACL
 semantics and physical cross-platform power-loss verification remain open.
+
+## Step 65 — Provision the Android SDK required by the release job
+
+### Goal
+
+Make the GitHub release-artifact job independent of the runner's preinstalled
+Android SDK inventory.
+
+### Reproduced failure
+
+The GitHub Actions run for `df8ba16` passed the reproducible checks and Docker
+jobs, but `Build release artifacts` failed at `Build Android release package`
+with exit code 1. The local build passed because this workstation already has
+Android platform 36 and build-tools 36.0.0 installed.
+
+### Changes
+
+- Added an explicit `sdkmanager` step to install `platforms;android-36` and
+  `build-tools;36.0.0` before the artifact build.
+- Updated the README to document that the CI workflow provisions the pinned
+  Android SDK packages.
+
+### Verification
+
+- Local `flutter build apk --release`: **PASS**, 53.8 MB APK generated.
+- The corrected workflow remains to be observed on a new GitHub Actions run.
