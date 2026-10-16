@@ -1696,14 +1696,34 @@ class DartServerService {
   Future<Map<String, dynamic>?> _readValidatedConfig(File file) async {
     try {
       if (!await file.exists()) return null;
+      if (await FileSystemEntity.type(file.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return null;
+      }
       if (await file.length() > _configValidator.limits.maxSerializedBytes) {
         return null;
       }
+      await _restrictConfigFile(file.path);
       final decoded = jsonDecode(await file.readAsString());
       return _configValidator.validate(decoded).config;
     } catch (_) {
       return null;
     }
+  }
+
+  Future<void> _restrictConfigFile(String filePath) async {
+    if (Platform.isWindows) return;
+    final result = await Process.run('chmod', ['600', filePath]);
+    if (result.exitCode != 0) {
+      throw StateError('config permissions unavailable');
+    }
+  }
+
+  Future<void> _writePrivateConfigFile(String filePath, String contents) async {
+    final file = File(filePath);
+    await file.create(exclusive: true);
+    await _restrictConfigFile(filePath);
+    await file.writeAsString(contents, flush: true);
   }
 
   Future<bool> _writeConfigAtomically(
@@ -1717,16 +1737,22 @@ class DartServerService {
     final backupTemp = File('$tempPath.bak');
     try {
       final encoded = jsonEncode(config);
-      await File(tempPath).writeAsString(encoded, flush: true);
+      await _writePrivateConfigFile(tempPath, encoded);
 
       if (previousConfig != null) {
-        await backupTemp.writeAsString(jsonEncode(previousConfig), flush: true);
+        await _writePrivateConfigFile(
+          backupTemp.path,
+          jsonEncode(previousConfig),
+        );
         await backupTemp.rename(backup.path);
       }
 
-      // On the daemon's supported POSIX runtime rename replaces the target as
-      // one filesystem operation. The old target remains usable if any step
-      // before this point fails, and the .bak is always last-known-good.
+      // The sibling temporary file stays on the same filesystem, so rename is
+      // the platform's atomic replacement primitive. The old target remains
+      // usable if any step before this point fails, and the .bak is always
+      // last-known-good. On POSIX, both temporary files and the resulting
+      // config/backup are explicitly private (0600); Windows relies on the
+      // process/user ACL boundary because chmod is not available there.
       await File(tempPath).rename(target.path);
       return true;
     } catch (_) {

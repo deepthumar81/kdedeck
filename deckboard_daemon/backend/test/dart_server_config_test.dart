@@ -76,6 +76,19 @@ void main() {
     expect(server!.isRunning, isFalse);
   });
 
+  test('existing POSIX config permissions are tightened on load', () async {
+    if (Platform.isWindows) return;
+
+    final path = '${tempDirectory.path}/deckboard_config.json';
+    await File(path).writeAsString(jsonEncode(_config('permissions')));
+    expect(Process.runSync('chmod', ['644', path]).exitCode, 0);
+
+    server = _newServer(path);
+    await server!.startServer();
+
+    expect(_mode(path), '600');
+  });
+
   test('injected test bind address overrides config mode', () async {
     final path = '${tempDirectory.path}/deckboard_config.json';
     await File(path)
@@ -197,6 +210,63 @@ void main() {
     await messages.close();
     await client.close();
   });
+
+  test('config and backup files use private POSIX permissions', () async {
+    if (Platform.isWindows) return;
+
+    final path = '${tempDirectory.path}/deckboard_config.json';
+    server = _newServer(path);
+    final connection = await _authenticatedClient(server!);
+    final client = connection.socket;
+    final messages = connection.messages;
+
+    client.add(jsonEncode({'type': 'save_config', 'config': _config('first')}));
+    expect((await messages.next())['type'], 'config_updated');
+    expect(_mode(path), '600');
+
+    client.add(
+      jsonEncode({'type': 'save_config', 'config': _config('second')}),
+    );
+    expect((await messages.next())['type'], 'config_updated');
+    expect(_mode(path), '600');
+    expect(_mode('$path.bak'), '600');
+
+    await messages.close();
+    await client.close();
+  });
+
+  test(
+    'repeated replacement exposes complete JSON and leaves no temp files',
+    () async {
+      final path = '${tempDirectory.path}/deckboard_config.json';
+      server = _newServer(path);
+      final connection = await _authenticatedClient(server!);
+      final client = connection.socket;
+      final messages = connection.messages;
+
+      for (var index = 0; index < 5; index++) {
+        final id = 'revision-$index';
+        client.add(jsonEncode({'type': 'save_config', 'config': _config(id)}));
+        expect((await messages.next())['type'], 'config_updated');
+        expect(
+          jsonDecode(await File(path).readAsString())['boards'][0]['id'],
+          id,
+        );
+      }
+
+      expect(
+        tempDirectory.listSync().where(
+          (entry) =>
+              entry.path.startsWith('$path.tmp-') ||
+              entry.path.endsWith('.tmp.bak'),
+        ),
+        isEmpty,
+      );
+
+      await messages.close();
+      await client.close();
+    },
+  );
 
   test(
     'stop drains in-flight saves and fences queued saves across restart',
@@ -338,6 +408,16 @@ Map<String, dynamic> _config(String id) => {
     },
   ],
 };
+
+String _mode(String filePath) {
+  final modeFlag = Platform.isMacOS ? '-f' : '-c';
+  final modeFormat = Platform.isMacOS ? '%Lp' : '%a';
+  return Process.runSync('stat', [
+    modeFlag,
+    modeFormat,
+    filePath,
+  ]).stdout.toString().trim();
+}
 
 Future<T> _bounded<T>(Future<T> future) =>
     future.timeout(const Duration(seconds: 3));

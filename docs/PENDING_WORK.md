@@ -74,7 +74,9 @@ security or UI/platform parity.
 - [x] Add standalone in-process config revision/conflict detection and injected
   persistence failure coverage (Step 46).
 - [ ] Verify restrictive config-file permissions and cross-platform atomic
-  replacement behavior.
+  replacement behavior. POSIX `0600` enforcement, symlink/non-regular-file
+  rejection, complete repeated-save visibility, and temporary-file cleanup are
+  covered in Step 56; Windows ACL and Windows/macOS CI verification remain.
 - [x] Add a backward-compatible `config_schema_version` marker and reject
   unsupported versions without rewriting legacy files (Step 42).
 - [x] Icon authorization, file/content limits and safe SVG behavior; valid Snap,

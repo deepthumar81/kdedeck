@@ -2239,3 +2239,39 @@ The validator returns a stable validated byte snapshot, but Dart's portable
 filesystem APIs do not provide an fd-native `openat`/`O_NOFOLLOW` primitive, so
 a concurrent post-validation filesystem replacement remains a residual
 platform limitation.
+
+## Step 56 — Restrict standalone config replacement artifacts
+
+### Goal
+
+Make standalone configuration writes private by default and verify that the
+atomic replacement path never exposes partial JSON or leaves temporary files.
+
+### Changes
+
+- Reject config paths that are not regular files when loading.
+- Tighten existing POSIX config files to mode `0600` before validation.
+- Create config and backup temporary files exclusively and restrict them to
+  `0600` before writing.
+- Preserve sibling temporary-file replacement and last-known-good backup
+  behavior.
+- Add config tests for private primary/backup modes, existing-file tightening,
+  complete repeated-save visibility, and temporary-file cleanup.
+
+### Verification
+
+- Focused config suite: **PASS**, 13 tests.
+- Full backend `dart analyze`: **PASS**, no errors; existing informational
+  diagnostics remain.
+- Full backend `dart test -j 1`: **PASS**, 224 tests.
+- `dart format lib/dart_server_service.dart test/dart_server_config_test.dart`:
+  **PASS**.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+POSIX permission enforcement and portable Dart replacement behavior are covered
+by automated tests on Linux. Windows ACL enforcement, Windows replacement
+semantics, macOS CI verification, and directory durability after power loss
+remain open release-engineering work; this pending item stays unchecked until
+those platform checks exist.
