@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/deepthumar81/kdedeck/security/advisories/new
+    about: Report security issues privately. Do not post credentials or exploit details publicly.
+  - name: Contribution guide
+    url: https://github.com/deepthumar81/kdedeck/blob/main/CONTRIBUTING.md
+    about: Read the setup, testing, and pull request guidance before contributing.

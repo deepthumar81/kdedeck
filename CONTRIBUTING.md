@@ -1,72 +1,84 @@
-# Contributing to KDE Deck 🛠️
+# Contributing to KDE Deck
 
-Welcome! We are thrilled that you want to contribute to KDE Deck. To ensure a smooth development experience, please read this guide on how our architecture is structured and how to set up your local environment.
+Thanks for helping improve KDE Deck. Contributions are welcome for the Linux
+daemon, browser configurator, Flutter client, tray wrapper, documentation, and
+tests.
 
----
+## Before you start
 
-## 🏛️ System Architecture
+- Read the [README](README.md) for the supported architecture and current
+  limitations.
+- Read the security requirements in
+  [`docs/security/security-requirements.md`](docs/security/security-requirements.md)
+  before changing network, authentication, command execution, configuration,
+  or filesystem behavior.
+- For security vulnerabilities, follow [`SECURITY.md`](SECURITY.md) instead of
+  opening a public issue.
 
-KDE Deck is built on a **Three-Tier Architecture**. Understanding how these pieces talk to each other is critical.
+## Development setup
 
-### 1. The Core Server (`deckboard_daemon/backend`)
-* **Language:** Dart
-* **Role:** The brain of the operation. It runs locally on the user's PC (port `8484`). It hosts the WebSockets connection, serves the local Web UI files, and executes native OS commands (like D-Bus).
-* **Important Files:**
-  * `lib/dart_server_service.dart`: HTTP and WebSocket initialization.
-  * `lib/system_actions_service.dart`: Native Linux execution (D-Bus, `.desktop` parsing).
+The supported toolchain is pinned in the repository:
 
-### 2. The Desktop Wrapper (`deckboard_daemon/tray`)
-* **Language:** Go (Golang)
-* **Role:** Provides a native OS System Tray icon for the user. Its only job is to provide a GUI menu to Open/Quit the application and to manage the lifecycle of the Dart Core Server process.
+- Dart `3.13.1`
+- Flutter `3.47.1`
+- Node.js `22.23.1`
+- Go version from `deckboard_daemon/tray/go.mod`
 
-### 3. The Mobile Client (`kdedeck_mobile`)
-* **Language:** Flutter / Dart
-* **Role:** The Neumorphic Android/iOS remote control. It is a "dumb client" that simply renders the JSON state sent by the Core Server over WebSockets.
+Install component dependencies from the repository root:
 
----
+```bash
+dart pub get --directory deckboard_daemon/backend
+flutter pub get --directory kdedeck_mobile
+go -C deckboard_daemon/tray mod download
+```
 
-## 💻 Development Environment Setup
+On Debian or Ubuntu, the tray checks also need:
 
-Because the project uses three different technologies, you only need to install the SDKs for the parts you intend to modify!
+```bash
+sudo apt-get update
+sudo apt-get install --no-install-recommends libayatana-appindicator3-dev
+```
 
-### Modifying the Core Server (Dart)
-1. Install the [Dart SDK](https://dart.dev/get-dart).
-2. Navigate to the backend directory:
+Copy `.env.example` only when local environment variables are needed. Never
+commit certificates, private keys, pairing tokens, bearer tokens, or local
+configuration files.
+
+## Make a change
+
+1. Create a focused branch from `main`.
+2. Add or update a meaningful test for behavior that changes.
+3. Preserve the existing security boundary and compatibility behavior.
+4. Update relevant documentation and `docs/DEVELOPMENT_LOG.md` for a
+   substantial change.
+5. Run the complete repository check:
+
+   ```bash
+   make test
+   ```
+
+6. For Dart changes, also run:
+
    ```bash
    cd deckboard_daemon/backend
-   dart pub get
-   ```
-3. Run the server in development mode:
-   ```bash
-   dart run bin/backend.dart
+   dart analyze
+   dart format --output=none --set-exit-if-changed lib test
    ```
 
-### Modifying the Desktop Tray (Go)
-1. Install [Go](https://golang.org/doc/install).
-2. Navigate to the tray directory:
-   ```bash
-   cd deckboard_daemon/tray
-   go mod tidy
-   ```
-3. Run the tray wrapper:
-   ```bash
-   go run main.go
-   ```
+## Pull requests
 
-### Modifying the Mobile App (Flutter)
-1. Install the [Flutter SDK](https://flutter.dev/docs/get-started/install).
-2. Navigate to the mobile directory:
-   ```bash
-   cd kdedeck_mobile
-   flutter pub get
-   ```
-3. Run the app on your connected device or emulator:
-   ```bash
-   flutter run
-   ```
+- Keep each pull request focused and explain the user-visible result.
+- Describe security, compatibility, and platform implications.
+- Include the exact checks you ran and their results.
+- Do not include secrets, generated credentials, device captures containing
+  private data, or unrelated formatting changes.
+- Maintainers may request changes before merging. All contributions are
+  accepted under the GNU GPLv3-or-later terms in [`LICENSE`](LICENSE).
 
----
+## Architecture quick reference
 
-## 🤝 Code Style & Pull Requests
-* Please run `dart format .` before submitting PRs for Dart/Flutter code.
-* If you are implementing a new OS-specific feature (e.g., Windows media controls), please wrap it in `if (Platform.isWindows)` blocks in the `system_actions_service.dart` file to maintain our cross-platform integrity!
+- `deckboard_daemon/backend`: Dart daemon, HTTP/WebSocket protocol, Linux
+  actions, persistence, and browser assets.
+- `deckboard_daemon/tray`: Go system-tray wrapper.
+- `kdedeck_mobile`: Flutter Android/mobile client.
+- `docs`: architecture, protocol, threat model, testing, decisions, and the
+  durable development log.

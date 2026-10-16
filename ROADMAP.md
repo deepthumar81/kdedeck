@@ -1,7 +1,7 @@
 # KDE Deck - Project Roadmap & Plan 🗺️
 
 **Current Version**: `main` after `v3.5.0` (Linux-first hardened development line)
-**License**: MIT  
+**License**: GNU GPLv3-or-later
 **Target Platform**: Linux (KDE Plasma on Wayland & X11)  
 *Future Platforms: Windows & macOS*
 

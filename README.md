@@ -1,8 +1,14 @@
 # KDE Deck 🚀
 
+[![CI](https://github.com/deepthumar81/kdedeck/actions/workflows/ci.yml/badge.svg)](https://github.com/deepthumar81/kdedeck/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 **Turn an old Android phone into a Stream Deck for Linux. $0.**
 
-KDE Deck is an open-source macro pad / deck controller for **Linux (KDE Plasma 6, Wayland & X11)**. Instead of paying Elgato money, you run a lightweight server on your PC and drive it from your phone: launch approved apps, control media, slide volume and brightness, ring your phone, manage windows — a full remote for your Linux box, built from scratch.
+KDE Deck is a free-software macro pad and deck controller for **Linux (KDE
+Plasma 6, Wayland & X11)**. Run the daemon on your Linux PC and control it from
+an Android phone or the browser configurator: launch approved applications,
+control media, adjust volume and brightness, and manage a customizable board.
 
 The current release line is Linux-first. Windows and macOS support are planned
 platform adapters, not supported system-control backends yet.
@@ -10,6 +16,25 @@ platform adapters, not supported system-control backends yet.
 ![Demo video](assets/demo.mp4)
 
 *One tap on the phone opens YouTube on the monitor, media buttons drive playback and volume, and the last tap opens system settings.*
+
+## Project status
+
+KDE Deck is an active Linux-first development project. The daemon, browser
+configurator, authentication boundary, TLS listener, Android client, and
+automated checks are under development and testing. Windows and macOS adapters,
+signed release packaging, physical-device QA, and certificate trust UX remain
+on the roadmap. See [`ROADMAP.md`](ROADMAP.md) and
+[`docs/PENDING_WORK.md`](docs/PENDING_WORK.md) before relying on a feature.
+
+## For contributors
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Architecture](docs/architecture.md)
+- [Protocol](docs/protocol.md)
+- [Testing guide](docs/testing.md)
+- [Roadmap](ROADMAP.md)
 
 ---
 
@@ -230,4 +255,5 @@ Because this repository is public, you can easily view our auto-generated projec
 *(To enable this on your fork: Go to GitHub Repository Settings -> Pages -> Build and deployment -> Source: Deploy from a branch -> Select `main`).*
 
 ## License 📜
-Distributed under the MIT License.
+Distributed under the GNU General Public License v3.0 or later. See
+[`LICENSE`](LICENSE) for the complete terms.
