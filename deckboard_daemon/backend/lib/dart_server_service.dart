@@ -13,6 +13,7 @@ import 'config_validator.dart';
 import 'protocol_metadata.dart';
 import 'server_tls.dart';
 import 'session_store.dart';
+import 'session_persistence_policy.dart';
 import 'system_actions_service.dart';
 import 'websocket_rate_limiter.dart';
 
@@ -88,6 +89,15 @@ class DartServerService {
     return value;
   }
 
+  static FileSessionStore Function()? _productionSessionStoreFactory(
+    Map<String, String> environment,
+  ) {
+    final policy = SessionPersistencePolicy.fromEnvironment(environment);
+    if (!policy.isRequired) return null;
+    return () =>
+        FileSessionStore.inUserConfigDirectory(environment: environment);
+  }
+
   DartServerService._internal()
     : port = 8484,
       _bindAddress = InternetAddress.loopbackIPv4,
@@ -95,7 +105,9 @@ class DartServerService {
       _configPath = 'deckboard_config.json',
       _frontendRoot = '../frontend',
       _authSessionManager = AuthSessionManager(issueCodeOnCreate: false),
-      _sessionStoreFactory = null,
+      _sessionStoreFactory = _productionSessionStoreFactory(
+        Platform.environment,
+      ),
       _authRateLimiter = AuthRateLimiter(),
       _clientIdentityResolver = _defaultClientIdentity,
       _configValidator = const ConfigValidator(),

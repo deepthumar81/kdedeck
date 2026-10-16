@@ -53,6 +53,13 @@ matching private key through `KDEDECK_TLS_CERT_FILE` and
 plaintext HTTP/WS. See [`docs/security/tls-setup.md`](docs/security/tls-setup.md)
 before exposing the daemon beyond the local machine.
 
+Durable daemon sessions are an explicit opt-in. Set
+`KDEDECK_SESSION_PERSISTENCE=required` to retain session fingerprints across a
+restart. The daemon fails closed if the private session store cannot be created,
+read, or updated; it never falls back to an in-memory session table in this
+mode. Leave the variable unset or set to `disabled` for the default in-memory
+behaviour.
+
 To inspect the daemon release identity without starting a listener:
 
 ```bash

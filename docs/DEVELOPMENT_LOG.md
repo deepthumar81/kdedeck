@@ -2390,3 +2390,34 @@ CI without a physical Android device.
 This does not add signing, package-manager metadata, clean-install/upgrade
 automation, rollback tests, or physical Android/LAN QA. Those remain release
 work even though the Android APK is now built automatically in CI.
+
+## Step 60 — Make production session persistence an explicit policy
+
+### Goal
+
+Give production startup a deterministic persistence contract without silently
+falling back to memory when an operator expects durable sessions.
+
+### Changes
+
+- Added `SessionPersistencePolicy` with exact `disabled` and `required` modes.
+- Wired the production singleton to use `FileSessionStore.inUserConfigDirectory`
+  only when `KDEDECK_SESSION_PERSISTENCE=required`.
+- Unknown policy values fail closed during startup configuration rather than
+  being interpreted as an unsafe or ambiguous mode.
+- Required-mode store creation, read, lock, marker, and write failures already
+  stop startup or reject authentication through the existing bounded store
+  failure path; no memory fallback is introduced.
+- Added policy parsing/path tests and documented the environment contract.
+
+### Verification
+
+- Focused persistence-policy tests: **PASS**.
+- Full project test command remains to be run before commit.
+
+### Scope boundary
+
+Directory fsync/durability, Windows ACL and replacement verification,
+cross-platform locking, multi-isolate ownership, and the remaining in-flight
+shutdown audit are still required before the production-persistence checklist
+item can be closed.

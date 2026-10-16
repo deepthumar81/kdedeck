@@ -52,9 +52,10 @@ security or UI/platform parity.
 - [x] Define queued config-save shutdown semantics: stale queued writes must not
   overwrite config loaded by a restarted server; drain or cancel safely (Step 36).
 - [ ] Wire production persistence only with an explicit policy for
-  marker-creation/storage failure. Verify
-   directory durability, Windows replacement/ACLs, cross-platform locking and
-   multi-isolate ownership. Audit in-flight operation shutdown ordering.
+   marker-creation/storage failure. Step 60 adds the explicit required/disabled
+   policy and fail-closed production wiring; verify directory durability,
+   Windows replacement/ACLs, cross-platform locking, multi-isolate ownership,
+   and in-flight operation shutdown ordering.
 - [x] Stabilize lock-probe subprocess cleanup under parallel suite load; timed
   probes are now terminated and reaped instead of retaining the session lock
   (Step 51).
