@@ -125,6 +125,7 @@ platform SDKs and desktop integration.
 - Node.js `22.23.1` (see [`.nvmrc`](.nvmrc))
 - Docker Engine `29.9.0` or a compatible recent Docker release for the
   container workflow
+- Linux tray development package: `libayatana-appindicator3-dev`
 
 Install dependencies in each component before the first local build:
 
@@ -132,6 +133,14 @@ Install dependencies in each component before the first local build:
 dart pub get --directory deckboard_daemon/backend
 flutter pub get --directory kdedeck_mobile
 go -C deckboard_daemon/tray mod download
+```
+
+On Debian/Ubuntu before running the tray checks, install the native tray
+dependency:
+
+```bash
+sudo apt-get update
+sudo apt-get install --no-install-recommends libayatana-appindicator3-dev
 ```
 
 Run the complete repository check with one command:

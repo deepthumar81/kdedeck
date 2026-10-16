@@ -2455,6 +2455,36 @@ Device trust-store installation, in-app fingerprint approval, expiry warnings,
 physical LAN verification, and cross-platform certificate provisioning remain
 open release work.
 
+## Step 63 — Install the Linux tray build dependency in CI
+
+### Goal
+
+Make the repository test workflow provision the native Linux package required by
+the Go tray wrapper before `go test ./...` runs.
+
+### Reproduced failure
+
+The CI test command failed in `deckboard_daemon/tray` with:
+
+```text
+Package 'ayatana-appindicator3-0.1', required by 'virtual:world', not found
+```
+
+The Go module and source were otherwise unchanged; `pkg-config` could not find
+the system-provided AppIndicator development metadata.
+
+### Changes
+
+- Added an Ubuntu CI step installing `libayatana-appindicator3-dev` before the
+  locked Go dependency installation and `make test`.
+- Documented the same local Linux prerequisite in the README.
+
+### Verification
+
+- Local `cd deckboard_daemon/tray && go test ./...`: **PASS**.
+- The original CI command remains to be observed on a fresh GitHub runner after
+  this fix is pushed.
+
 ## Step 62 — Add browser configurator end-to-end error coverage
 
 ### Goal

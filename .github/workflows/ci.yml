@@ -44,6 +44,12 @@ jobs:
           go-version-file: deckboard_daemon/tray/go.mod
           cache: true
 
+      - name: Install tray Linux system dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libayatana-appindicator3-dev
+
       - name: Install locked dependencies
         run: |
           dart pub get --directory deckboard_daemon/backend --enforce-lockfile
