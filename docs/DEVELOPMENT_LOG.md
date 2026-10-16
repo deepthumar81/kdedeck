@@ -2413,7 +2413,7 @@ falling back to memory when an operator expects durable sessions.
 ### Verification
 
 - Focused persistence-policy tests: **PASS**.
-- Full project test command remains to be run before commit.
+- Full `make test`: **PASS** after the policy wiring was integrated.
 
 ### Scope boundary
 
@@ -2447,7 +2447,7 @@ trust provisioning.
 
 - TLS provisioning suite: **PASS**, 2 tests.
 - Existing TLS suite: **PASS**.
-- Full project checks remain to be run before commit.
+- Full `make test`: **PASS** after the provisioning helper was integrated.
 
 ### Scope boundary
 
@@ -2505,7 +2505,7 @@ user-visible flow rather than only as message-policy unit tests.
 ### Verification
 
 - Browser configurator E2E harness: **PASS**, 2 tests.
-- Full project checks remain to be run before commit.
+- Full `make test`: **PASS** after the browser harness was added to the test command.
 
 ### Scope boundary
 
