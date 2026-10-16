@@ -2421,3 +2421,36 @@ Directory fsync/durability, Windows ACL and replacement verification,
 cross-platform locking, multi-isolate ownership, and the remaining in-flight
 shutdown audit are still required before the production-persistence checklist
 item can be closed.
+
+## Step 61 — Add local TLS provisioning and fingerprint manifests
+
+### Goal
+
+Give Linux operators a safe, repeatable way to create a SAN-correct local TLS
+certificate, rotate it intentionally, and verify its identity before client
+trust provisioning.
+
+### Changes
+
+- Added `bin/tls_provision.dart`, which invokes OpenSSL with argument arrays
+  rather than a shell and validates every hostname/IP input.
+- Generated files are `server.crt`, `server.key`, and `server.sha256`; the key
+  is mode `0600` and the output directory is mode `0700` on POSIX.
+- Existing files are protected from accidental overwrite; `--force` is required
+  for explicit certificate rotation.
+- Added SAN, fingerprint, permissions, overwrite, and rotation tests.
+- Documented separate-channel fingerprint verification and the current boundary:
+  the tool does not bypass platform hostname validation or install trust into a
+  phone automatically.
+
+### Verification
+
+- TLS provisioning suite: **PASS**, 2 tests.
+- Existing TLS suite: **PASS**.
+- Full project checks remain to be run before commit.
+
+### Scope boundary
+
+Device trust-store installation, in-app fingerprint approval, expiry warnings,
+physical LAN verification, and cross-platform certificate provisioning remain
+open release work.

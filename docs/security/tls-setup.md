@@ -12,6 +12,24 @@ repository. The certificate must be valid for the hostname/IP clients use,
 including the appropriate subject alternative names. Keep the private key
 accessible only to the daemon user. Do not commit keys or paste them in chat.
 
+The repository includes a local provisioning helper. It creates a self-signed
+certificate with the requested SANs, restricts the key to mode `0600` on POSIX,
+and writes a SHA-256 fingerprint manifest. It refuses to overwrite existing
+files unless `--force` is supplied for intentional rotation:
+
+```bash
+cd deckboard_daemon/backend
+dart run bin/tls_provision.dart \
+  --hostname my-pc.example.test \
+  --hostname 192.168.1.50 \
+  --output-dir "$HOME/.config/kdedeck/tls"
+```
+
+Verify `server.sha256` through a separate trusted local channel before giving
+the certificate to a client or installing it into a device trust store. The
+fingerprint is an identity check; it does not replace normal certificate
+hostname and expiry validation.
+
 Example invocation from the backend directory, using placeholder paths:
 
 ```bash
@@ -39,7 +57,8 @@ profiles default to **Secure connection (WSS / HTTPS)**. Certificate trust and
 hostname checks are performed by the platform; there is no accept-any-certificate
 option or downgrade to plaintext. A self-signed certificate without provisioned
 trust will show a connection failure **before any pairing code/token is sent**.
-An in-app fingerprint/trust provisioning workflow is not implemented yet.
+An in-app fingerprint/trust provisioning workflow is not implemented yet;
+provisioning remains an operator/device trust-store operation.
 
 Start the standalone daemon with `--pair` in its local interactive terminal, then
 enter that one-time code in the app's **Pair with code** field. Successful pairing

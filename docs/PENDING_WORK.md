@@ -84,7 +84,9 @@ security or UI/platform parity.
 - [x] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
   user-local Flatpak and package icon roots with no feature regression (Step 55).
 - [ ] TLS certificate provisioning, verified fingerprint/trust workflow, expiry
-  and hostname rejection fixtures, rotation UX and physical LAN verification.
+  and hostname rejection fixtures, rotation UX and physical LAN verification
+  (Step 61 adds local provisioning/fingerprint tooling; device trust and LAN
+  verification remain).
 - [x] Reject explicitly unsupported protocol versions before standalone
   authentication consumes credentials (Step 43); omitted versions remain
   backward-compatible.
