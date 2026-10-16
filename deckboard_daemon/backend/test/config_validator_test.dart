@@ -34,18 +34,15 @@ void main() {
     }
   });
 
-  test(
-    'rejects the checked-in config until legacy launch commands are migrated',
-    () async {
-      final fixture = jsonDecode(
-        await File('deckboard_config.json').readAsString(),
-      );
-      final result = const ConfigValidator().validate(fixture);
+  test('accepts the portable checked-in config', () async {
+    final fixture = jsonDecode(
+      await File('deckboard_config.json').readAsString(),
+    );
+    final result = const ConfigValidator().validate(fixture);
 
-      expect(result.isValid, isFalse);
-      expect(result.errorCode, 'unsafe_launch_payload');
-    },
-  );
+    expect(result.isValid, isTrue);
+    expect(result.errorCode, isNull);
+  });
 
   test('rejects malformed top-level, board, and item collections', () {
     expect(_validate({'boards': null}), isFalse);

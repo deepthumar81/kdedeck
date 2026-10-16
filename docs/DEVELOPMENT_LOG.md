@@ -240,10 +240,9 @@ Flatpak, and Snap launch behaviour.
 - `dart compile exe bin/backend.dart -o /tmp/kdedeck-daemon-step5`: **PASS**.
 - `git diff --check`: **PASS**.
 
-The normal `dart` command through `/snap/bin/dart` was unavailable during one
-check because the host snap confinement lacked `cap_dac_override`; the same
-checks were rerun successfully with the Flutter-bundled Dart SDK at
-`/home/kaily/snap/flutter/common/flutter/bin/cache/dart-sdk/bin/dart`.
+The normal `dart` command through the host snap was unavailable during one
+check because snap confinement lacked `cap_dac_override`; the same checks were
+rerun successfully with the Dart SDK bundled with Flutter.
 
 ### Features preserved
 
@@ -350,9 +349,9 @@ behavior.
   **PASS**.
 - `dart compile exe bin/backend.dart -o /tmp/kdedeck-daemon-step7`:
   **PASS**.
-- The host `/snap/bin/dart` command remains unavailable because snap
-  confinement lacks `cap_dac_override`; all checks above used the Flutter-bundled
-  Dart SDK at `/home/kaily/snap/flutter/common/flutter/bin/cache/dart-sdk/bin`.
+- The host snap `dart` command remains unavailable because snap confinement
+  lacks `cap_dac_override`; all checks above used the Dart SDK bundled with
+  Flutter.
 
 - The legacy `pin_required` field is now `true` after successful standalone
   authentication, and configuration broadcasts are limited to authenticated

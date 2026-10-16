@@ -101,12 +101,88 @@ capabilities explicitly where an operating system does not support an action.
 
 ---
 
-## 🛠️ Building from Source
+## 🛠️ Building and testing from source
 
-If you want to contribute to the code:
-1. Ensure you have the Dart SDK and Flutter installed.
-2. **Backend:** `cd deckboard_daemon/backend && dart compile exe bin/backend.dart -o kdedeck_daemon`
-3. **Frontend:** `cd kdedeck_mobile && flutter build apk --release`
+The repository contains a standalone Dart daemon, a static browser
+configurator, a Go tray wrapper, and a Flutter client. The reproducible Docker
+path builds and runs the standalone daemon and browser configurator; Android,
+desktop Flutter, and the native tray remain host builds because they require
+platform SDKs and desktop integration.
+
+### Prerequisites
+
+- Dart SDK `3.13.1`
+- Flutter `3.47.1` with the SDK revision recorded in
+  [`kdedeck_mobile/.metadata`](kdedeck_mobile/.metadata)
+- Go `1.25.0` or newer within the module's supported toolchain line
+- Node.js `22.23.1` (see [`.nvmrc`](.nvmrc))
+- Docker Engine `29.9.0` or a compatible recent Docker release for the
+  container workflow
+
+Install dependencies in each component before the first local build:
+
+```bash
+dart pub get --directory deckboard_daemon/backend
+flutter pub get --directory kdedeck_mobile
+go -C deckboard_daemon/tray mod download
+```
+
+Run the complete repository check with one command:
+
+```bash
+make test
+```
+
+This runs the serial backend suite, browser tests and syntax checks, Go tests
+and vet, and Flutter tests. After dependencies are installed, it does not
+download anything.
+
+Build local artifacts with:
+
+```bash
+cd deckboard_daemon/backend
+dart compile exe bin/backend.dart -o kdedeck_daemon
+cd ../..
+cd kdedeck_mobile
+flutter build apk --release
+```
+
+### Docker build and run
+
+Build the standalone daemon image from the repository root:
+
+```bash
+docker build --tag kdedeck-daemon .
+```
+
+Run it on a Linux host using host networking. The checked-in default config is
+loopback-only, so this keeps the daemon available at `http://localhost:8484`
+without exposing it to the LAN:
+
+```bash
+docker volume create kdedeck-config
+docker run --rm --network host \
+  --volume kdedeck-config:/opt/kdedeck/backend \
+  kdedeck-daemon
+```
+
+The container uses the committed backend lockfile during its build and runs as
+an unprivileged `kdedeck` user. For phone/LAN access, provide a deliberately
+configured TLS certificate/key and an `allow_lan: true` configuration; the
+daemon never downgrades LAN mode to plaintext.
+
+The container is a daemon deployment target, not an Android build image and
+not a replacement for the host-integrated Flutter desktop or Go tray builds.
+
+### Deployment checklist
+
+1. Run `make test`.
+2. Build and inspect the daemon with `docker build --tag kdedeck-daemon .` or
+   `dart compile exe`.
+3. Keep TLS private keys, pairing overrides, and local application registries
+   outside Git; use `.env.example` as the variable reference.
+4. For LAN deployments, verify certificate hostname/trust and pair the phone
+   through the local terminal before using the daemon.
 
 ---
 

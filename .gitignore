@@ -4,3 +4,27 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# Local environment files (keep the safe template tracked).
+.env
+.env.*
+!.env.example
+
+# Dart and Flutter tool state, caches, coverage, and build outputs.
+.dart_tool/
+**/.dart_tool/
+.pub-cache/
+**/.pub-cache/
+.pub/
+**/.pub/
+.flutter-plugins
+**/.flutter-plugins
+.flutter-plugins-dependencies
+**/.flutter-plugins-dependencies
+*.iml
+**/build/
+**/coverage/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+*.symbols
+*.map.json

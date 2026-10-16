@@ -1753,7 +1753,7 @@ class DartServerService {
               "id": "btn_1",
               "title": "Terminal",
               "action": "launch_app",
-              "payload": "konsole",
+              "payload": "terminal",
               "icon": "terminal",
               "span_cols": 1,
               "span_rows": 1,
