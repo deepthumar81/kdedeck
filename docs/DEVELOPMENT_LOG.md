@@ -2562,6 +2562,8 @@ Android platform 36 and build-tools 36.0.0 installed.
   `build-tools;36.0.0` before the artifact build.
 - Added `android-actions/setup-android@v3` so the command-line tools are present
   and the SDK manager path is deterministic on the hosted runner.
+- Added an explicit Temurin JDK 17 setup before the Android tooling action, as
+  required by the action's documented setup sequence.
 - Updated the README to document that the CI workflow provisions the pinned
   Android SDK packages.
 
@@ -2573,3 +2575,6 @@ Android platform 36 and build-tools 36.0.0 installed.
 The first corrected run reached the SDK step but failed with exit code 127
 because `sdkmanager` was not on `PATH`; this follow-up addresses that runner
 environment issue directly.
+
+The next run reached `Set up Android SDK tools` but that action failed before
+the package-install step; the artifact job now provisions its JDK explicitly.

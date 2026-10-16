@@ -88,6 +88,12 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Set up Android SDK tools
         uses: android-actions/setup-android@v3
 
