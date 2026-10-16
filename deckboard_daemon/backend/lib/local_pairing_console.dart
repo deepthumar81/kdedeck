@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'auth_session_manager.dart';
 import 'dart_server_service.dart';
 
 /// Local interactive pairing only. The secret callback must write directly to
@@ -10,22 +11,26 @@ final class LocalPairingConsole {
     required bool Function() outputHasTerminal,
     required void Function(String) writeSecretToTerminal,
     required void Function(String) writeError,
+    required void Function(String) writeToTerminal,
   }) : _inputHasTerminal = inputHasTerminal,
        _outputHasTerminal = outputHasTerminal,
        _writeSecretToTerminal = writeSecretToTerminal,
-       _writeError = writeError;
+       _writeError = writeError,
+       _writeToTerminal = writeToTerminal;
 
   factory LocalPairingConsole.system() => LocalPairingConsole(
     inputHasTerminal: () => stdin.hasTerminal,
     outputHasTerminal: () => stdout.hasTerminal,
     writeSecretToTerminal: stdout.write,
     writeError: stderr.writeln,
+    writeToTerminal: stdout.write,
   );
 
   final bool Function() _inputHasTerminal;
   final bool Function() _outputHasTerminal;
   final void Function(String) _writeSecretToTerminal;
   final void Function(String) _writeError;
+  final void Function(String) _writeToTerminal;
 
   bool get hasInteractiveTerminal =>
       _inputHasTerminal() && _outputHasTerminal();
@@ -52,8 +57,51 @@ final class LocalPairingConsole {
   }
 
   bool handleLine(String line, DartServerService server) {
-    if (line.trim() != 'pair') return false;
-    return issueCode(server.issueLocalPairingCode);
+    final command = line.trim();
+    if (command == 'pair') return issueCode(server.issueLocalPairingCode);
+    if (!const {'status', 'revoke all'}.contains(command) &&
+        !command.startsWith('revoke role ')) {
+      return false;
+    }
+    if (!hasInteractiveTerminal) {
+      _writeError(
+        'Local administrative commands require an interactive terminal.',
+      );
+      return false;
+    }
+
+    try {
+      if (command == 'status') {
+        final status = server.localSessionStatus();
+        _writeToTerminal(
+          'Active sessions: ${status.activeSessions}/${status.maxSessions}\n',
+        );
+        return true;
+      }
+
+      if (command == 'revoke all') {
+        final count = server.revokeLocalSessions();
+        _writeToTerminal('Revoked $count session${count == 1 ? '' : 's'}.\n');
+        return true;
+      }
+
+      final roleName = command.substring('revoke role '.length);
+      final role = AuthRole.values.where((candidate) {
+        return candidate.name == roleName;
+      }).firstOrNull;
+      if (role == null) {
+        _writeError('Usage: revoke role viewer|control|configAdmin');
+        return false;
+      }
+      final count = server.revokeLocalSessions(role: role);
+      _writeToTerminal(
+        'Revoked $count $roleName session${count == 1 ? '' : 's'}.\n',
+      );
+      return true;
+    } catch (_) {
+      _writeError('Could not apply local administrative command.');
+      return false;
+    }
   }
 }
 

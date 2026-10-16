@@ -165,6 +165,7 @@ void main() {
         inputHasTerminal: () => terminal,
         outputHasTerminal: () => terminal,
         writeSecretToTerminal: output.add,
+        writeToTerminal: output.add,
         writeError: errors.add,
       );
       expect(
@@ -200,6 +201,7 @@ void main() {
       inputHasTerminal: () => input,
       outputHasTerminal: () => true,
       writeSecretToTerminal: output.add,
+      writeToTerminal: output.add,
       writeError: errors.add,
     );
     input = false;
@@ -215,6 +217,64 @@ void main() {
     expect(output, isEmpty);
     expect(errors.last, contains('Could not issue'));
   });
+
+  test(
+    'local status and revoke commands expose counts but never credentials',
+    () async {
+      final manager = _DummyManager();
+      server = _server(manager, tempDirectory);
+      await server!.startServer();
+
+      final viewer = manager.authenticate(
+        'DUMMY-INITIAL',
+        role: AuthRole.viewer,
+      )!;
+      manager.issuePairingCode(code: 'DUMMY-CONTROL');
+      final control = manager.authenticate(
+        'DUMMY-CONTROL',
+        role: AuthRole.control,
+      )!;
+      final output = <String>[];
+      final errors = <String>[];
+      final console = LocalPairingConsole(
+        inputHasTerminal: () => true,
+        outputHasTerminal: () => true,
+        writeSecretToTerminal: output.add,
+        writeToTerminal: output.add,
+        writeError: errors.add,
+      );
+
+      expect(console.handleLine('status', server!), isTrue);
+      expect(output.single, 'Active sessions: 2/100\n');
+      expect(output.single, isNot(contains(viewer.token)));
+      expect(output.single, isNot(contains(control.token)));
+
+      expect(console.handleLine('revoke role viewer', server!), isTrue);
+      expect(output.last, 'Revoked 1 viewer session.\n');
+      expect(manager.validateToken(viewer.token), isNull);
+      expect(manager.validateToken(control.token), isNotNull);
+
+      expect(console.handleLine('revoke all', server!), isTrue);
+      expect(output.last, 'Revoked 1 session.\n');
+      expect(manager.activeSessionCount, 0);
+      expect(errors, isEmpty);
+    },
+  );
+
+  test(
+    'local administrative commands fail closed without a running server',
+    () async {
+      final manager = _DummyManager();
+      server = _server(manager, tempDirectory);
+      final output = <String>[];
+      final errors = <String>[];
+      final console = _console(true, true, output, errors);
+
+      expect(console.handleLine('status', server!), isFalse);
+      expect(output, isEmpty);
+      expect(errors.single, 'Could not apply local administrative command.');
+    },
+  );
 
   test(
     'same-terminal pair rotates code and keeps existing token on WebSocket',
@@ -300,6 +360,7 @@ LocalPairingConsole _console(
   inputHasTerminal: () => input,
   outputHasTerminal: () => output,
   writeSecretToTerminal: secretOutput.add,
+  writeToTerminal: secretOutput.add,
   writeError: errors.add,
 );
 

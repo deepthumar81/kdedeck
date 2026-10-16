@@ -2275,3 +2275,49 @@ by automated tests on Linux. Windows ACL enforcement, Windows replacement
 semantics, macOS CI verification, and directory durability after power loss
 remain open release-engineering work; this pending item stays unchecked until
 those platform checks exist.
+
+## Step 57 — Audit delayed operations and add local session administration
+
+### Goal
+
+Audit asynchronous standalone-server continuations for lifecycle and
+authorization gaps, then provide a local-only recovery path for revoking
+credentials without exposing bearer tokens.
+
+### Audit result
+
+- HTTP body preparation, frontend/icon reads, WebSocket upgrades, installed-app
+  discovery, metrics probes, configuration saves, action execution, and
+  sensitive-action confirmation all now check the captured lifecycle generation
+  after their awaited work before routing, mutating state, broadcasting, or
+  sending a result.
+- Authenticated continuations revalidate the socket session after delayed work;
+  manager revocation remains connected to the immediate socket-close listener.
+- No additional delayed continuation was found that could mutate a restarted
+  generation or send an authorized result after revocation.
+
+### Changes
+
+- Added local terminal status reporting with only the active/max session count.
+- Added exact-role and revoke-all terminal commands. Revocation goes through the
+  existing persistence-aware session manager and listener, so affected sockets
+  are invalidated without listing or printing credentials.
+- Kept the existing explicit `pair` command as the only local command that
+  displays a secret; all administrative commands require an interactive stdin
+  and stdout and fail closed when the server is stopped.
+- Added tests for bounded status output, exact-role revocation, revoke-all,
+  stopped-server failure, and credential non-disclosure.
+
+### Verification
+
+- Local pairing/administration suite: **PASS**, 11 tests.
+- Full backend `dart test -j 1`: **PASS**.
+- Backend `dart analyze`: **PASS**, no errors; existing informational
+  diagnostics remain.
+- Dart format and `git diff --check`: **PASS**.
+
+### Scope boundary
+
+This adds terminal-only session administration but does not select a role during
+initial pairing, add a browser/mobile revocation UI, or enable production
+persistence. Those remain separate pending work items.

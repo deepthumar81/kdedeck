@@ -10,7 +10,8 @@ security or UI/platform parity.
 - [x] Revalidate session expiry/revocation before broadcasts (Step 16).
 - [x] Revalidate delayed app-discovery responses (Step 17).
 - [x] Promptly disconnect manager-revoked standalone sessions (Step 18).
-- [ ] Audit other delayed operations and implement local administrative controls.
+- [x] Audit other delayed operations and implement local administrative controls
+  (Step 57).
 - [x] Bound rate-limiter identity storage and expire stale entries.
 - [x] Add bounded standalone WebSocket connections and per-client message/action
   flood protection.

@@ -304,6 +304,27 @@ class DartServerService {
     return (code: code, expiresAt: _authSessionManager.pairingCodeExpiresAt!);
   }
 
+  /// Returns non-secret session information for the local terminal operator.
+  ({int activeSessions, int maxSessions}) localSessionStatus() {
+    if (!isRunning) throw StateError('Server is not running');
+    return (
+      activeSessions: _authSessionManager.activeSessionCount,
+      maxSessions: _authSessionManager.maxActiveSessions,
+    );
+  }
+
+  /// Revokes sessions from the local terminal without exposing bearer tokens.
+  ///
+  /// An omitted role revokes every session. A supplied role matches that role
+  /// exactly, so an operator cannot accidentally revoke more privileged roles
+  /// while targeting a narrower class of device.
+  int revokeLocalSessions({AuthRole? role}) {
+    if (!isRunning) throw StateError('Server is not running');
+    return role == null
+        ? _authSessionManager.revokeAllSessions()
+        : _authSessionManager.revokeSessionsByRole(role);
+  }
+
   Map<String, dynamic>? configData;
   // Keep revisions out of persisted configs so legacy files remain compatible.
   // They protect concurrent explicit saves for this daemon process lifetime.
