@@ -2355,3 +2355,38 @@ keeping role selection local to the operator who controls the daemon terminal.
 Background/tray pairing without terminal logging, mobile/browser revocation UI,
 and production persistence remain open. Role selection is intentionally
 local-only and does not add remote role provisioning.
+
+## Step 59 — Add reproducible CI and release-build gates
+
+### Goal
+
+Run the repository's pinned checks on every pull request and `main` push, and
+prove that the daemon, Android release APK, and Docker image can be rebuilt in
+CI without a physical Android device.
+
+### Changes
+
+- Added `.github/workflows/ci.yml` with pinned Dart, Flutter, Node.js, and Go
+  setup from the repository's runtime metadata.
+- The test job installs locked dependencies, runs `make test`, Dart analysis,
+  and formatting checks.
+- The artifact job builds the standalone daemon and Android release APK, then
+  uploads them as unsigned CI artifacts.
+- The container job builds the checked-in Dockerfile as a reproducibility gate.
+- Updated the README and pending-work index to distinguish CI build artifacts
+  from signed release packages and physical-device QA.
+
+### Verification
+
+- Local `make test`: **PASS**.
+- `dart compile exe deckboard_daemon/backend/bin/backend.dart`: **PASS**.
+- `flutter build apk --release`: **PASS**, 53.8 MB APK generated.
+- Local `git diff --check`: **PASS**.
+- GitHub Actions execution remains to be observed after this workflow is pushed;
+  local checks cannot claim a remote runner result.
+
+### Scope boundary
+
+This does not add signing, package-manager metadata, clean-install/upgrade
+automation, rollback tests, or physical Android/LAN QA. Those remain release
+work even though the Android APK is now built automatically in CI.

@@ -118,7 +118,8 @@ security or UI/platform parity.
   launching/paths/storage and build tests (do not treat compilation as parity).
 - [ ] Add the planned plugins/features only after security/UX baseline acceptance.
 - [ ] CI, packaging, clean-install/upgrade/recovery tests, release checks and docs
-  synchronization (architecture and older baseline descriptions are historical).
+  synchronization (Step 59 adds CI, locked checks, Docker, daemon, and Android
+  artifact gates; packaging and install/upgrade coverage remain).
 - [ ] Define versioned in-place app updates for the Linux daemon and Flutter app:
   monotonic release/build metadata, stable package identity, preserved user
   configuration and session data, explicit migrations and protocol compatibility,

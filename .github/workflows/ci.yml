@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Reproducible checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.13.1
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.1
+          channel: stable
+          cache: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: deckboard_daemon/tray/go.mod
+          cache: true
+
+      - name: Install locked dependencies
+        run: |
+          dart pub get --directory deckboard_daemon/backend --enforce-lockfile
+          flutter pub get --directory kdedeck_mobile --enforce-lockfile
+          go -C deckboard_daemon/tray mod download
+
+      - name: Run the repository test command
+        run: make test
+
+      - name: Check Dart analysis
+        working-directory: deckboard_daemon/backend
+        run: dart analyze
+
+      - name: Check formatting
+        working-directory: deckboard_daemon/backend
+        run: dart format --output=none --set-exit-if-changed lib test
+
+  artifacts:
+    name: Build release artifacts
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.13.1
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.1
+          channel: stable
+          cache: true
+
+      - name: Install locked dependencies
+        run: |
+          dart pub get --directory deckboard_daemon/backend --enforce-lockfile
+          flutter pub get --directory kdedeck_mobile --enforce-lockfile
+
+      - name: Compile daemon
+        run: |
+          mkdir -p artifacts
+          dart compile exe deckboard_daemon/backend/bin/backend.dart \
+            -o artifacts/kdedeck_daemon
+
+      - name: Build Android release package
+        working-directory: kdedeck_mobile
+        run: flutter build apk --release
+
+      - name: Collect artifacts
+        run: cp kdedeck_mobile/build/app/outputs/flutter-apk/app-release.apk artifacts/
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdedeck-release-artifacts
+          path: artifacts/
+          if-no-files-found: error
+
+  container:
+    name: Docker reproducibility gate
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build daemon container
+        run: docker build --tag kdedeck-daemon:ci .

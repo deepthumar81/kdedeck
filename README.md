@@ -137,6 +137,11 @@ This runs the serial backend suite, browser tests and syntax checks, Go tests
 and vet, and Flutter tests. After dependencies are installed, it does not
 download anything.
 
+Pull requests and pushes to `main` run the same locked checks in GitHub Actions.
+The workflow also verifies Dart analysis and formatting, builds the standalone
+daemon, builds the Android release APK, and builds the Docker image. The
+workflow artifacts are validation outputs, not signed public release packages.
+
 Build local artifacts with:
 
 ```bash
