@@ -109,8 +109,9 @@ security or UI/platform parity.
   Physical device and certificate trust provisioning QA remain pending above.
 - [x] Fix the provider-less Flutter widget smoke test by matching the production
   `WebSocketService` provider boundary (Step 48).
-- [ ] Complete browser end-to-end tests for authenticated error/capacity/
-  rate-limit/config rejection handling.
+- [x] Complete browser end-to-end tests for authenticated error/capacity/
+  rate-limit/config rejection handling (Step 62; device and physical LAN QA
+  remain separate).
 - [x] Keep web bearer tokens in session-only storage, preserve dirty drafts across
   reconnect/rejection paths, and provide explicit config recovery (Step 49).
 - [x] Send standalone protocol version and compare-and-swap config revisions from

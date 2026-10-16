@@ -2454,3 +2454,30 @@ trust provisioning.
 Device trust-store installation, in-app fingerprint approval, expiry warnings,
 physical LAN verification, and cross-platform certificate provisioning remain
 open release work.
+
+## Step 62 — Add browser configurator end-to-end error coverage
+
+### Goal
+
+Exercise the real browser configurator module with browser-compatible DOM,
+storage, and WebSocket seams so authenticated failure handling is checked as a
+user-visible flow rather than only as message-policy unit tests.
+
+### Changes
+
+- Added `frontend/browser_e2e.test.mjs`, a dependency-free browser-runtime
+  harness that loads `app.js` with DOM, session storage, and WebSocket behavior.
+- Covered pairing-required state, session capacity, rate limiting, bounded
+  auth-error messages, authenticated action failures, invalid-config rejection,
+  and config-conflict recovery controls.
+- Added the browser E2E harness to `make test`.
+
+### Verification
+
+- Browser configurator E2E harness: **PASS**, 2 tests.
+- Full project checks remain to be run before commit.
+
+### Scope boundary
+
+This is a deterministic browser-runtime harness and does not replace manual
+browser QA, physical LAN testing, or device certificate trust provisioning.
