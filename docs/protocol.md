@@ -97,12 +97,14 @@ Normal startup creates no pairing code. No HTTP/WebSocket request issues or
 reveals a code. The first paired device still receives `configAdmin` privileges.
 
 While the daemon is running in an interactive terminal, the local operator can
-type `pair` to rotate and display a fresh one-time code, `status` to display the
-bounded active-session count, `revoke role viewer`, `revoke role control`, or
-`revoke role configAdmin` to revoke exactly that role, and `revoke all` to
-revoke every session. These commands never display bearer tokens or pairing
-codes except for the explicit `pair` command. Administrative commands require
-both terminal streams and fail closed when the server is stopped.
+type `pair` to rotate and display a fresh one-time `configAdmin` code, or use
+`pair role viewer`, `pair role control`, or `pair role configAdmin` to approve a
+specific role before displaying the code. The operator can also type `status` to
+display the bounded active-session count, `revoke role viewer`, `revoke role
+control`, or `revoke role configAdmin` to revoke exactly that role, and `revoke
+all` to revoke every session. These commands never display bearer tokens or
+pairing codes except for the explicit pair commands. Administrative commands
+require both terminal streams and fail closed when the server is stopped.
 
 The terminal is a sensitive local display: do not use terminal recording or share
 screenshots of it. Background/tray mode has no pairing display yet; use this

@@ -277,6 +277,42 @@ void main() {
   );
 
   test(
+    'local pairing can select a bounded role before displaying the code',
+    () async {
+      final manager = _DummyManager();
+      server = _server(manager, tempDirectory);
+      await server!.startServer();
+      final output = <String>[];
+      final errors = <String>[];
+      final console = _console(true, true, output, errors);
+
+      expect(console.handleLine('pair role viewer', server!), isTrue);
+      expect(output.single, contains('DUMMY-ONE'));
+      expect(errors, isEmpty);
+
+      final socket = await WebSocket.connect(
+        'ws://127.0.0.1:${server!.port}/ws',
+      );
+      final messages = StreamIterator<dynamic>(socket);
+      addTearDown(() async {
+        await messages.cancel();
+        await socket.close();
+      });
+      expect(await _next(messages), {'type': 'auth_required'});
+      socket.add(
+        jsonEncode({
+          'type': 'authenticate',
+          'pairing_code': 'DUMMY-ONE',
+          'role': 'configAdmin',
+        }),
+      );
+      final success = await _next(messages);
+      expect(success['role'], 'viewer');
+      expect(await _next(messages), containsPair('type', 'init_state'));
+    },
+  );
+
+  test(
     'same-terminal pair rotates code and keeps existing token on WebSocket',
     () async {
       final manager = _DummyManager();

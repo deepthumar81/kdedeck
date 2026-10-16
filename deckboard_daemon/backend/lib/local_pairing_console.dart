@@ -58,7 +58,26 @@ final class LocalPairingConsole {
 
   bool handleLine(String line, DartServerService server) {
     final command = line.trim();
-    if (command == 'pair') return issueCode(server.issueLocalPairingCode);
+    if (command == 'pair') {
+      return issueCode(server.issueLocalPairingCode);
+    }
+    if (command.startsWith('pair role ')) {
+      if (!hasInteractiveTerminal) {
+        _writeError(
+          'Pairing requires an interactive stdin and stdout terminal.',
+        );
+        return false;
+      }
+      final roleName = command.substring('pair role '.length);
+      final role = AuthRole.values.where((candidate) {
+        return candidate.name == roleName;
+      }).firstOrNull;
+      if (role == null) {
+        _writeError('Usage: pair role viewer|control|configAdmin');
+        return false;
+      }
+      return issueCode(() => server.issueLocalPairingCode(role: role));
+    }
     if (!const {'status', 'revoke all'}.contains(command) &&
         !command.startsWith('revoke role ')) {
       return false;

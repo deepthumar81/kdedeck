@@ -58,8 +58,8 @@ security or UI/platform parity.
 - [x] Stabilize lock-probe subprocess cleanup under parallel suite load; timed
   probes are now terminated and reaped instead of retaining the session lock
   (Step 51).
-- [ ] Local approval and role selection instead of always pairing as configAdmin;
-  background/tray local pairing without logging codes.
+- [x] Local approval and role selection instead of always pairing as configAdmin
+  (Step 58); background/tray local pairing without logging codes remains.
 - [x] Gate sensitive power/session actions behind an explicit policy and local
   confirmation for sleep, shutdown, and logout (Step 39).
 - [x] Restrict standalone application execution to locally approved opaque

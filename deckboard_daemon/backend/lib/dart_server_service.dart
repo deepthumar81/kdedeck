@@ -233,6 +233,7 @@ class DartServerService {
   final String _configPath;
   final String _frontendRoot;
   AuthSessionManager _authSessionManager;
+  AuthRole _localPairingRole = AuthRole.configAdmin;
   final FileSessionStore Function()? _sessionStoreFactory;
   FileSessionStore? _ownedSessionStore;
   Future<void> _lifecycleTail = Future<void>.value();
@@ -298,9 +299,12 @@ class DartServerService {
   ///
   /// Only the local terminal caller should display the returned secret. Never
   /// include it in server logs, exceptions, or network responses.
-  ({String code, DateTime expiresAt}) issueLocalPairingCode() {
+  ({String code, DateTime expiresAt}) issueLocalPairingCode({
+    AuthRole role = AuthRole.configAdmin,
+  }) {
     if (!isRunning) throw StateError('Server is not running');
     final code = _authSessionManager.issuePairingCode();
+    _localPairingRole = role;
     return (code: code, expiresAt: _authSessionManager.pairingCodeExpiresAt!);
   }
 
@@ -1178,15 +1182,16 @@ class DartServerService {
     AuthAuthenticationFailure? authenticationFailure;
 
     if (pairingCode is String && pairingCode.isNotEmpty && token == null) {
-      // Bootstrap pairing is configAdmin-only in this first server slice. A
-      // client-supplied role is deliberately ignored and cannot elevate or
-      // downgrade the server-assigned bootstrap role.
+      // The role is assigned only by the local terminal operator when issuing
+      // the code. A client-supplied role is deliberately ignored and cannot
+      // elevate or downgrade the server-assigned role.
       final result = _authSessionManager.authenticateWithStatus(
         pairingCode,
-        role: AuthRole.configAdmin,
+        role: _localPairingRole,
       );
       session = result.session;
       authenticationFailure = result.failure;
+      if (session != null) _localPairingRole = AuthRole.configAdmin;
     } else if (token is String && token.isNotEmpty && pairingCode == null) {
       session = _authSessionManager.validateToken(token);
     }

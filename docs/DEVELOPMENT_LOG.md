@@ -2321,3 +2321,37 @@ credentials without exposing bearer tokens.
 This adds terminal-only session administration but does not select a role during
 initial pairing, add a browser/mobile revocation UI, or enable production
 persistence. Those remain separate pending work items.
+
+## Step 58 — Locally approved pairing roles
+
+### Goal
+
+Stop assigning every newly paired device the maximum `configAdmin` role while
+keeping role selection local to the operator who controls the daemon terminal.
+
+### Changes
+
+- Added `pair role viewer`, `pair role control`, and `pair role configAdmin`
+  terminal commands. The existing `pair` command remains an explicit
+  `configAdmin` compatibility shortcut.
+- The selected role is held only with the current one-time pairing code and is
+  never accepted from the network client.
+- Invalid roles and non-interactive terminal use fail closed without issuing a
+  code. Bearer tokens and pairing material remain absent from diagnostics.
+- Added an end-to-end pairing test proving a locally selected viewer role is
+  advertised and cannot be changed by the client payload.
+
+### Verification
+
+- Local pairing/administration suite: **PASS**, 10 tests.
+- Full backend `dart test -j 1`: **PASS**, 228 tests.
+- `make test`: **PASS** across backend, frontend, tray, and Flutter checks.
+- Backend `dart analyze`: **PASS**, no errors; existing informational
+  diagnostics remain.
+- Dart format and `git diff --check`: **PASS**.
+
+### Scope boundary
+
+Background/tray pairing without terminal logging, mobile/browser revocation UI,
+and production persistence remain open. Role selection is intentionally
+local-only and does not add remote role provisioning.
