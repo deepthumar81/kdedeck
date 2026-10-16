@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ffi' as ffi;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -52,10 +53,12 @@ class FileSessionStore implements SessionStore {
     void Function()? beforePendingCreate,
     void Function()? beforePendingWrite,
     void Function()? beforePendingClear,
+    void Function()? beforeDirectorySync,
   }) : _beforeReplace = beforeReplace,
        _beforePendingCreate = beforePendingCreate,
        _beforePendingWrite = beforePendingWrite,
-       _beforePendingClear = beforePendingClear {
+       _beforePendingClear = beforePendingClear,
+       _beforeDirectorySync = beforeDirectorySync {
     if (!path.isAbsolute(filePath) || path.normalize(filePath) != filePath) {
       throw const SessionStoreException();
     }
@@ -83,6 +86,7 @@ class FileSessionStore implements SessionStore {
   final void Function()? _beforePendingCreate;
   final void Function()? _beforePendingWrite;
   final void Function()? _beforePendingClear;
+  final void Function()? _beforeDirectorySync;
   String get _pendingPath => '$filePath.pending';
   String get _lockPath => '$filePath.lock';
   static final Set<String> _ownedPaths = <String>{};
@@ -271,10 +275,12 @@ class FileSessionStore implements SessionStore {
       _beforeReplace?.call();
       temporary.renameSync(filePath);
       temporaryPath = null;
+      _syncDirectory();
       // A failed removal leaves the store unusable rather than allowing a
       // possibly stale snapshot to be accepted at the next startup.
       _beforePendingClear?.call();
       pending.deleteSync();
+      _syncDirectory();
     } catch (_) {
       throw const SessionStoreException();
     } finally {
@@ -345,8 +351,10 @@ class FileSessionStore implements SessionStore {
       _beforeReplace?.call();
       temporary.renameSync(filePath);
       temporaryPath = null;
+      _syncDirectory();
       _beforePendingClear?.call();
       File(_pendingPath).deleteSync();
+      _syncDirectory();
     } catch (_) {
       throw const SessionStoreException();
     } finally {
@@ -389,5 +397,67 @@ class FileSessionStore implements SessionStore {
     if (Platform.isWindows) return;
     final result = Process.runSync('chmod', [mode, target]);
     if (result.exitCode != 0) throw const SessionStoreException();
+  }
+
+  /// Persist directory-entry changes after an atomic replacement or marker
+  /// removal. A file flush alone does not make the rename durable after a
+  /// sudden power loss. Opening a directory read-only and flushing its file
+  /// descriptor is supported by POSIX filesystems; Windows has no equivalent
+  /// dart:io operation and retains its documented ACL/replacement boundary.
+  void _syncDirectory() {
+    _beforeDirectorySync?.call();
+    if (Platform.isWindows) return;
+    _PosixDirectorySync.flush(path.dirname(filePath));
+  }
+}
+
+/// dart:io does not expose a directory file descriptor. Keep this small POSIX
+/// bridge local to the store rather than weakening the durability barrier or
+/// adding a native build dependency to the backend.
+class _PosixDirectorySync {
+  static final ffi.DynamicLibrary _lib = ffi.DynamicLibrary.open(
+    Platform.isMacOS ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6',
+  );
+  static final _malloc = _lib
+      .lookupFunction<
+        ffi.Pointer<ffi.Void> Function(ffi.IntPtr),
+        ffi.Pointer<ffi.Void> Function(int)
+      >('malloc');
+  static final _free = _lib
+      .lookupFunction<
+        ffi.Void Function(ffi.Pointer<ffi.Void>),
+        void Function(ffi.Pointer<ffi.Void>)
+      >('free');
+  static final _open = _lib
+      .lookupFunction<
+        ffi.Int32 Function(ffi.Pointer<ffi.Int8>, ffi.Int32),
+        int Function(ffi.Pointer<ffi.Int8>, int)
+      >('open');
+  static final _fsync = _lib
+      .lookupFunction<ffi.Int32 Function(ffi.Int32), int Function(int)>(
+        'fsync',
+      );
+  static final _close = _lib
+      .lookupFunction<ffi.Int32 Function(ffi.Int32), int Function(int)>(
+        'close',
+      );
+
+  static void flush(String directoryPath) {
+    final encoded = utf8.encode(directoryPath);
+    final pointer = _malloc(encoded.length + 1);
+    if (pointer == ffi.nullptr) throw const SessionStoreException();
+    var descriptor = -1;
+    try {
+      final bytes = pointer.cast<ffi.Uint8>().asTypedList(encoded.length + 1);
+      bytes.setAll(0, encoded);
+      bytes[encoded.length] = 0;
+      descriptor = _open(pointer.cast<ffi.Int8>(), 0);
+      if (descriptor < 0 || _fsync(descriptor) != 0) {
+        throw const SessionStoreException();
+      }
+    } finally {
+      if (descriptor >= 0) _close(descriptor);
+      _free(pointer);
+    }
   }
 }

@@ -176,6 +176,36 @@ void main() {
     },
   );
 
+  test('directory sync failure leaves a marker that blocks stale restore', () {
+    final original = manager().authenticate('pairing-secret')!;
+    final snapshot = file.readAsStringSync();
+    store.close();
+    var syncs = 0;
+    final unavailable = FileSessionStore(
+      file.path,
+      beforeDirectorySync: () {
+        if (!Platform.isWindows && ++syncs == 1) {
+          throw StateError('injected directory sync failure');
+        }
+      },
+    );
+    final active = AuthSessionManager(
+      issueCodeOnCreate: false,
+      clock: () => now,
+      sessionStore: unavailable,
+    );
+    expect(active.revokeToken(original.token), isFalse);
+    expect(file.readAsStringSync(), isNot(snapshot));
+    expect(File('${file.path}.pending').existsSync(), isTrue);
+    unavailable.close();
+    store = FileSessionStore(file.path);
+    expect(
+      () => store.read(maxSessions: 100),
+      throwsA(isA<SessionStoreException>()),
+    );
+    expect(manager().validateToken(original.token), isNull);
+  });
+
   test(
     'write failure closes the manager and retains the last complete file',
     () {

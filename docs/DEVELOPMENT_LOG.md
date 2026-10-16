@@ -2511,3 +2511,33 @@ user-visible flow rather than only as message-policy unit tests.
 
 This is a deterministic browser-runtime harness and does not replace manual
 browser QA, physical LAN testing, or device certificate trust provisioning.
+
+## Step 64 — Add a POSIX directory durability barrier for session snapshots
+
+### Goal
+
+Ensure that a successfully replaced session snapshot and its fail-closed
+pending marker have durable directory entries on POSIX filesystems, rather than
+only flushed file contents.
+
+### Changes
+
+- Added a small `dart:ffi` bridge for POSIX `open`, `fsync`, and `close` calls on
+  the session-store directory.
+- Flush the directory after the primary snapshot replacement and again after
+  the pending marker is removed, including offline reset.
+- A directory-sync failure remains bounded and leaves the pending marker in
+  place so a stale snapshot cannot be restored.
+- Added a focused regression test for the failure path.
+
+### Verification
+
+- Focused session-store and lock suites: **PASS**, 26 tests.
+- Full `make test`: **PASS**, including 233 backend tests, 3 UI-policy tests, 2
+  browser E2E tests, Go test/vet, and 56 Flutter tests.
+- `git diff --check`: **PASS**.
+
+### Scope boundary
+
+The barrier covers POSIX directory durability. Windows replacement/ACL
+semantics and physical cross-platform power-loss verification remain open.
