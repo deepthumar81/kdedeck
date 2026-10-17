@@ -138,6 +138,69 @@ void main() {
     expect(first['auth_required'], isTrue);
   });
 
+  test('init state advertises embedded protocol capabilities and schema',
+      () async {
+    final socket = await WebSocket.connect('ws://127.0.0.1:${server.port}/ws');
+    addTearDown(socket.close);
+    final messages = StreamIterator<dynamic>(socket);
+
+    await nextMessage(messages);
+    socket.add(jsonEncode(
+        {'type': 'authenticate', 'protocol_version': 1, 'token': token}));
+    expect((await nextMessage(messages))['type'], 'auth_success');
+    final init = await nextMessage(messages);
+
+    expect(init['protocol_version'], 1);
+    expect(init['capabilities'], ['trigger_action', 'save_config']);
+    expect((init['config'] as Map)['config_schema_version'], 1);
+    await messages.cancel();
+  });
+
+  test('config saves normalize legacy schema and reject incompatible roots',
+      () async {
+    final socket = await WebSocket.connect('ws://127.0.0.1:${server.port}/ws');
+    addTearDown(socket.close);
+    final messages = StreamIterator<dynamic>(socket);
+
+    await nextMessage(messages);
+    socket.add(jsonEncode(
+        {'type': 'authenticate', 'protocol_version': 1, 'token': token}));
+    await nextMessage(messages); // auth_success
+    await nextMessage(messages); // init_state
+
+    socket.add(jsonEncode({
+      'type': 'save_config',
+      'config': <String, dynamic>{'boards': <dynamic>[]},
+    }));
+    final normalized = await nextMessage(messages);
+    expect(normalized['type'], 'config_updated');
+    expect((normalized['config'] as Map)['config_schema_version'], 1);
+
+    socket.add(jsonEncode({
+      'type': 'save_config',
+      'config': <String, dynamic>{
+        'config_schema_version': 2,
+        'boards': <dynamic>[],
+      },
+    }));
+    expect(await nextMessage(messages), {
+      'type': 'config_error',
+      'protocol_version': 1,
+      'code': 'unsupported_config_version',
+    });
+
+    socket.add(jsonEncode({
+      'type': 'save_config',
+      'config': <String, dynamic>{'boards': <String, dynamic>{}},
+    }));
+    expect(await nextMessage(messages), {
+      'type': 'config_error',
+      'protocol_version': 1,
+      'code': 'invalid_config',
+    });
+    await messages.cancel();
+  });
+
   test('unauthenticated save is rejected, then protocol v1 authenticates',
       () async {
     final socket = await WebSocket.connect('ws://127.0.0.1:${server.port}/ws');

@@ -6,8 +6,9 @@ authentication, `init_state` includes additive protocol metadata advertising a
 stable version and bounded capability list. The standalone server requires
 authentication before sending state or handling control/configuration requests.
 The Flutter embedded server remains a separate implementation with its own
-token-authentication boundary. It has not yet converged with standalone TLS,
-approval policies, or configuration validation.
+token-authentication boundary. It has not yet converged with standalone TLS
+or approval policies, but it now shares the protocol version and config schema
+version boundary.
 
 ## Transport and endpoints
 
@@ -365,7 +366,9 @@ temporary file and atomically replace `deckboard_config.json`; the prior valid
 file is retained as the bounded `deckboard_config.json.bak`. Startup validates
 the primary, then the backup, and otherwise uses the safe default. A failed or
 invalid save leaves the active config unchanged. The embedded server remains a
-separate implementation and is not changed by this step. See
+separate implementation: it now applies the schema-version boundary and
+requires a top-level `boards` list, but does not yet implement the standalone
+validator's detailed board/item checks. See
 [`dart_server_service.dart`](../deckboard_daemon/backend/lib/dart_server_service.dart#L177-L187),
 [`dart_server_service.dart`](../deckboard_daemon/backend/lib/dart_server_service.dart#L196-L225),
 and [`services/dart_server_service.dart`](../kdedeck_mobile/lib/services/dart_server_service.dart#L140-L150).

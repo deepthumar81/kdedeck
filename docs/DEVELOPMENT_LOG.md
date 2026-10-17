@@ -2678,3 +2678,43 @@ physical Android, desktop-platform, or LAN QA.
 The automated Linux tests exercise the trust-before-auth, hostname, expiry,
 endpoint cleanup, and rotation boundaries. Physical Android/device-keystore,
 Windows, macOS, and physical LAN verification remain pending.
+
+## Step 69 — Add Android QA, release consistency, and embedded schema boundaries
+
+### Goal
+
+Use the connected Android device for a bounded manual QA slice while improving
+release reproducibility and bringing the embedded Flutter server closer to the
+standalone protocol boundary.
+
+### Changes
+
+- Made the Flutter Add PC dialog scrollable and added a landscape keyboard-inset
+  widget regression test. A debug APK installed and launched successfully on an
+  authorized Android device; startup showed the bounded connection recovery
+  state. No live daemon/certificate pairing was available, so physical WSS and
+  LAN behavior remain unverified.
+- Added `scripts/check-release-metadata.sh` and the `make release-check` target.
+  The offline gate checks package/release versions, changelog heading, lockfiles,
+  runtime pins, CI setup, and Docker Dart pins; `make test` and CI run it.
+- Added the embedded server's protocol capability and config-schema metadata,
+  legacy schema normalization, unsupported-version rejection, top-level boards
+  validation, and focused WebSocket coverage. Detailed standalone validation,
+  TLS convergence, and lifecycle/tray convergence remain pending.
+
+### Verification
+
+- `make release-check`: **PASS**.
+- `make test`: **PASS**, including 233 backend tests, frontend tests, Go test/vet,
+  and 71 Flutter tests.
+- `flutter test test/client_connection_ui_test.dart`: **PASS**, 9 tests.
+- `flutter test test/dart_server_service_test.dart`: **PASS**, 13 tests.
+- `flutter analyze`: completed with existing informational deprecation/style
+  diagnostics only.
+- `flutter build apk --debug`: **PASS**; ADB install and launch succeeded, and
+  no fatal Android runtime log was observed.
+
+### Scope boundary
+
+This step does not claim authenticated Android WSS, certificate provisioning,
+physical LAN pairing, Windows/macOS support, or signed release packaging.

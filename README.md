@@ -175,9 +175,16 @@ Run the complete repository check with one command:
 make test
 ```
 
-This runs the serial backend suite, browser tests and syntax checks, Go tests
-and vet, and Flutter tests. After dependencies are installed, it does not
-download anything.
+This first verifies that the backend and mobile package versions, standalone
+daemon release metadata, changelog heading, runtime pins, lockfiles, Docker
+base image, and CI setup agree. It then runs the serial backend suite, browser
+tests and syntax checks, Go tests and vet, and Flutter tests. After dependencies
+are installed, it does not download anything. Run just the release/package gate
+with:
+
+```bash
+make release-check
+```
 
 Pull requests and pushes to `main` run the same locked checks in GitHub Actions.
 The workflow also verifies Dart analysis and formatting, installs the Android

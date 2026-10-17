@@ -57,6 +57,9 @@ jobs:
           flutter pub get --directory kdedeck_mobile --enforce-lockfile
           go -C deckboard_daemon/tray mod download
 
+      - name: Verify release metadata and runtime pins
+        run: make release-check
+
       - name: Run the repository test command
         run: make test
 

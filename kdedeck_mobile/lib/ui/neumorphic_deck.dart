@@ -909,6 +909,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
        builder: (context) {
          return StatefulBuilder(builder: (context, updateDialog) {
          return AlertDialog(
+          scrollable: true,
           backgroundColor: bgColor,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Text("Add PC Connection", style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold)),

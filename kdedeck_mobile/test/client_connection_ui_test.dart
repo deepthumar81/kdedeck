@@ -241,6 +241,37 @@ void main() {
     expect(service.added!['secure'], true);
   });
 
+  testWidgets('add PC dialog remains within landscape keyboard insets',
+      (tester) async {
+    tester.view.physicalSize = const Size(2300, 1080);
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 500);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetViewInsets();
+    });
+
+    await render(tester);
+    await tester.tap(find.text('Add New PC IP'));
+    await animateDialog(tester);
+    await tester.tap(find.widgetWithText(TextField, 'Host or IP address'));
+    await tester.pump();
+
+    final errors = <String>[];
+    final previousOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final message = details.exceptionAsString();
+      if (message.contains('overflow')) errors.add(message);
+      previousOnError?.call(details);
+    };
+    tester.view.viewInsets = const FakeViewPadding(bottom: 500);
+    await tester.pump();
+    FlutterError.onError = previousOnError;
+    expect(errors, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
       'saved PC selection upgrades legacy LAN; drawer offers credential reset',
       (tester) async {

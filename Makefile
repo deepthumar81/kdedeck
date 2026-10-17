@@ -1,6 +1,9 @@
-.PHONY: test
+.PHONY: release-check test
 
-test:
+release-check:
+	sh scripts/check-release-metadata.sh
+
+test: release-check
 	cd deckboard_daemon/backend && dart test -j 1
 	node --test deckboard_daemon/frontend/ui_policy.test.mjs
 	node --test deckboard_daemon/frontend/browser_e2e.test.mjs

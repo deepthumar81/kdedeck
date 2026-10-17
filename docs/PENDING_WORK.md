@@ -83,15 +83,17 @@ security or UI/platform parity.
   unsupported versions without rewriting legacy files (Step 42).
 - [x] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
   user-local Flatpak and package icon roots with no feature regression (Step 55).
-- [ ] Verify Flutter Linux TLS expiry/hostname rejection fixtures, strict PEM
+- [x] Verify Flutter Linux TLS expiry/hostname rejection fixtures, strict PEM
   validation, endpoint cleanup, and safe certificate-rotation failure handling
-  (Step 68 implementation is present; runtime verification is blocked in this
-  environment); physical LAN verification remains pending.
+  (Step 68; local Linux verification complete); physical LAN verification
+  remains pending.
 - [x] Reject explicitly unsupported protocol versions before standalone
   authentication consumes credentials (Step 43); omitted versions remain
   backward-compatible.
 - [ ] Complete embedded Flutter server convergence with shared validation,
-  compatibility enforcement, and lifecycle/tray reliability.
+  compatibility enforcement, and lifecycle/tray reliability. Step 69 adds the
+  shared protocol/config-schema boundary; detailed validation and lifecycle
+  convergence remain.
 - [x] Add an embedded-server authentication boundary before remote state/actions,
   bounded protocol-v1 auth errors, token expiry/revocation checks, and focused
   WebSocket coverage (Step 52).
@@ -119,13 +121,15 @@ security or UI/platform parity.
 - [x] Send standalone protocol version and compare-and-swap config revisions from
   the web configurator; block unsafe retry after a conflict (Step 47).
 - [ ] Android and Linux UX bugs, accessible layouts/drag/drop/sliders, undo,
-  connection profiles and onboarding; record real device manual QA.
+  connection profiles and onboarding; Step 69 fixes the tested landscape
+  keyboard overflow in the Add PC dialog, but broader UX and manual QA remain.
 - [ ] Windows/macOS adapters, capability-driven unsupported-feature UI, native
   launching/paths/storage and build tests (do not treat compilation as parity).
 - [ ] Add the planned plugins/features only after security/UX baseline acceptance.
 - [ ] CI, packaging, clean-install/upgrade/recovery tests, release checks and docs
   synchronization (Step 59 adds CI, locked checks, Docker, daemon, and Android
-  artifact gates; packaging and install/upgrade coverage remain).
+  artifact gates; Step 69 adds the offline release metadata/runtime gate;
+  packaging and install/upgrade coverage remain).
 - [ ] Define versioned in-place app updates for the Linux daemon and Flutter app:
   monotonic release/build metadata, stable package identity, preserved user
   configuration and session data, explicit migrations and protocol compatibility,

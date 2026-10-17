@@ -120,6 +120,12 @@ class _ClientSession {
   DateTime? expiresAt;
 }
 
+final class _ConfigValidationException implements Exception {
+  const _ConfigValidationException(this.code);
+
+  final String code;
+}
+
 class DartServerService extends ChangeNotifier {
   static final DartServerService _instance = DartServerService._internal();
 
@@ -178,6 +184,12 @@ class DartServerService extends ChangeNotifier {
   static const int _maxAuthErrors = 5;
   static const int _maxMessageBytes = 64 * 1024;
   static const int _maxConfigBytes = 1024 * 1024;
+  static const int protocolVersion = 1;
+  static const int configSchemaVersion = 1;
+  static const List<String> capabilities = <String>[
+    'trigger_action',
+    'save_config',
+  ];
 
   Map<String, dynamic> metrics = {
     'cpu_temp': 45,
@@ -549,7 +561,8 @@ class DartServerService extends ChangeNotifier {
     configData ??= _getDefaultConfig();
     _sendToSocket(socket, {
       'type': 'init_state',
-      'protocol_version': 1,
+      'protocol_version': protocolVersion,
+      'capabilities': capabilities,
       'config': configData,
       'pin_required': false,
       'auth_required': false,
@@ -577,7 +590,7 @@ class DartServerService extends ChangeNotifier {
     }
     Map<String, dynamic>? candidate;
     try {
-      candidate = Map<String, dynamic>.from(incoming);
+      candidate = _normalizeConfig(incoming);
       if (utf8.encode(jsonEncode(candidate)).length > _maxConfigBytes) {
         throw const FormatException('config too large');
       }
@@ -592,6 +605,12 @@ class DartServerService extends ChangeNotifier {
         'config': configData,
       });
       notifyListeners();
+    } on _ConfigValidationException catch (error) {
+      _sendToSocket(socket, {
+        'type': 'config_error',
+        'protocol_version': protocolVersion,
+        'code': error.code,
+      });
     } catch (_) {
       _sendToSocket(socket, {
         'type': 'config_error',
@@ -830,9 +849,7 @@ class DartServerService extends ChangeNotifier {
     if (jsonStr != null) {
       try {
         final decoded = jsonDecode(jsonStr);
-        configData = decoded is Map
-            ? Map<String, dynamic>.from(decoded)
-            : _getDefaultConfig();
+        configData = _normalizeConfig(decoded);
       } catch (_) {
         configData = _getDefaultConfig();
       }
@@ -843,6 +860,7 @@ class DartServerService extends ChangeNotifier {
 
   Map<String, dynamic> _getDefaultConfig() {
     return {
+      'config_schema_version': configSchemaVersion,
       'boards': [
         {
           'id': 'board_default',
@@ -886,5 +904,32 @@ class DartServerService extends ChangeNotifier {
         },
       ],
     };
+  }
+
+  /// Applies the shared protocol's schema-version boundary and makes a
+  /// defensive JSON copy before a config becomes active or is persisted.
+  /// Detailed board validation remains owned by the standalone validator, but
+  /// both servers now reject incompatible config versions consistently.
+  Map<String, dynamic> _normalizeConfig(Object? value) {
+    if (value is! Map) {
+      throw const _ConfigValidationException('invalid_config');
+    }
+    final input = Map<String, dynamic>.from(value);
+    final schemaVersion = input['config_schema_version'];
+    if (input.containsKey('config_schema_version') &&
+        (schemaVersion is! int || schemaVersion != configSchemaVersion)) {
+      throw const _ConfigValidationException('unsupported_config_version');
+    }
+    if (input['boards'] is! List) {
+      throw const _ConfigValidationException('invalid_config');
+    }
+    input['config_schema_version'] = configSchemaVersion;
+    try {
+      return Map<String, dynamic>.from(
+        jsonDecode(jsonEncode(input)) as Map,
+      );
+    } catch (_) {
+      throw const _ConfigValidationException('invalid_config');
+    }
   }
 }
