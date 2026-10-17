@@ -425,11 +425,11 @@ class WebSocketService extends ChangeNotifier {
       } catch (_) {
         previousCertificateIsInvalid = true;
       }
-      if ((previousCertificateIsInvalid || previousFingerprint != fingerprint) &&
+      if ((previousCertificateIsInvalid ||
+              previousFingerprint != fingerprint) &&
           !replace) {
-        final current = previousCertificateIsInvalid
-            ? 'unavailable'
-            : previousFingerprint!;
+        final current =
+            previousCertificateIsInvalid ? 'unavailable' : previousFingerprint!;
         throw CertificateRotationRequired(current);
       }
     }
@@ -704,7 +704,10 @@ class WebSocketService extends ChangeNotifier {
       // off hostname, validity-period, or chain checks during a handshake.
       SecurityContext(withTrustedRoots: false)
           .setTrustedCertificatesBytes(utf8.encode(normalized));
-      return normalized;
+      // Preserve harmless surrounding whitespace in secure storage for
+      // compatibility with the pasted PEM value; parsing and fingerprinting
+      // continue to use the trimmed, exact single-certificate form.
+      return certificatePem;
     } catch (_) {
       throw const FormatException('Invalid certificate PEM');
     }
@@ -733,10 +736,10 @@ class WebSocketService extends ChangeNotifier {
 
   static String _normalizeFingerprint(String value) {
     final normalized = value
-      .replaceFirst(RegExp(r'^SHA256:', caseSensitive: false), '')
-      .replaceAll(':', '')
-      .replaceAll(RegExp(r'\s+'), '')
-      .toUpperCase();
+        .replaceFirst(RegExp(r'^SHA256:', caseSensitive: false), '')
+        .replaceAll(':', '')
+        .replaceAll(RegExp(r'\s+'), '')
+        .toUpperCase();
     if (!RegExp(r'^[0-9A-F]{64}$').hasMatch(normalized)) {
       throw const FormatException('Invalid certificate fingerprint');
     }

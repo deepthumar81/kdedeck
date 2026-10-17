@@ -241,7 +241,7 @@ void main() {
       certificate,
       expectedFingerprint: 'SHA256:${fingerprint.toLowerCase()}',
     );
-    expect(certificates.values['ws://127.0.0.1:8484'], certificate);
+    expect(certificates.values['wss://localhost:8484'], certificate);
     expect(service.certificateFingerprint, fingerprint);
     await expectLater(
       service.trustServerCertificate(

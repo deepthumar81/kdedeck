@@ -42,6 +42,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: deckboard_daemon/tray/go.mod
+          cache-dependency-path: deckboard_daemon/tray/go.sum
           cache: true
 
       - name: Install tray Linux system dependency

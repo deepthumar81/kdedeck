@@ -289,8 +289,8 @@ void main() {
       }
       await server.close(force: true);
     });
-    await client
-        .trustServerCertificate(await File(fixture.certificatePath).readAsString());
+    await client.trustServerCertificate(
+        await File(fixture.certificatePath).readAsString());
     client.connect();
     await _until(() => client.authRequired);
     expect(client.authError, isNull);
