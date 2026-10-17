@@ -130,6 +130,9 @@ jobs:
       - name: Validate release artifacts
         run: sh scripts/check-release-artifacts.sh artifacts
 
+      - name: Validate APK signature
+        run: sh scripts/check-android-signing.sh artifacts/app-release.apk
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:

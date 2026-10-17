@@ -252,6 +252,32 @@ void main() {
     );
   });
 
+  test('certificate trust artifact verifies its public certificate digest',
+      () async {
+    final certificate = await _certificateFixture();
+    final fingerprint = _fingerprint(certificate);
+    final artifact = CertificateTrustArtifact.parse(jsonEncode({
+      'format': 'kdedeck-trust',
+      'version': 1,
+      'certificate_pem': certificate,
+      'sha256': 'SHA256:${fingerprint.toLowerCase()}',
+    }));
+
+    expect(artifact.certificatePem, certificate);
+    expect(artifact.fingerprint, 'SHA256:$fingerprint');
+
+    final mismatched = jsonEncode({
+      'format': 'kdedeck-trust',
+      'version': 1,
+      'certificate_pem': certificate,
+      'sha256': 'SHA256:${'0' * 64}',
+    });
+    expect(
+      () => CertificateTrustArtifact.parse(mismatched),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
   test('certificate rotation is explicit and drops the old bearer', () async {
     final first = await _certificateFixture();
     final second = await _certificateFixture();

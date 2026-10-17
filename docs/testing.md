@@ -57,6 +57,12 @@ They will cover onboarding, authentication, reconnecting/offline states, board
 rendering, sliders, installed-app entries, icon fallback, capability-based UI,
 and small/large layouts.
 
+Physical Android UI testing follows the slow-device procedure in
+[`android-device-testing.md`](android-device-testing.md). Text input must wait
+for field focus, keyboard visibility, and the rendered value before the next
+action; coordinate taps and fixed `adb shell input` sequences are not reliable
+on older phones.
+
 ### End-to-end checks
 
 On a controlled Linux machine, verify:

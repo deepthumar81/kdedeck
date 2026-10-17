@@ -22,8 +22,10 @@ platform adapters, not supported system-control backends yet.
 KDE Deck is an active Linux-first development project. The daemon, browser
 configurator, authentication boundary, TLS listener, Android client, and
 automated checks are under development and testing. Verified certificate trust
-import is available in the Flutter client; Windows and macOS adapters, signed
-release packaging, and physical-device QA remain on the roadmap. See
+import is available in the Flutter client; Windows and macOS adapters and
+physical-device QA remain on the roadmap. Direct APK signing and release
+packaging are documented in [`docs/android-release.md`](docs/android-release.md).
+See
 [`ROADMAP.md`](ROADMAP.md) and
 [`docs/PENDING_WORK.md`](docs/PENDING_WORK.md) before relying on a feature.
 
@@ -103,6 +105,11 @@ To inspect the daemon release identity without starting a listener:
 For a self-signed certificate, the phone must trust the certificate through a
 separately verified provisioning process. KDE Deck does not disable certificate
 validation or accept every certificate.
+
+For direct APK distribution without the Play Store, use the production signing
+and GitHub Releases procedure in
+[`docs/android-release.md`](docs/android-release.md). The ordinary CI APK is a
+debug-signed validation artifact and is not a public release package.
 
 ### 3. The Web Configurator
 1. On your PC, open a web browser.
@@ -201,6 +208,11 @@ cd ../..
 cd kdedeck_mobile
 flutter build apk --release
 ```
+
+The default APK build uses the Android debug key for reproducible validation;
+it is not a distributable public release. Set up the production keystore and
+run the signing verification described in
+[`docs/android-release.md`](docs/android-release.md) before sharing an APK.
 
 Validate the locally built files before distributing them (the command expects
 `artifacts/kdedeck_daemon` and `artifacts/app-release.apk`; CI performs this

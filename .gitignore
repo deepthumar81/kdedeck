@@ -29,3 +29,8 @@ deckboard_daemon/tray/deckboard_tray
 **/ios/Flutter/.last_build_id
 *.symbols
 *.map.json
+
+# Android release signing material is generated locally or in CI only.
+*.jks
+*.keystore
+kdedeck_mobile/android/keystore/

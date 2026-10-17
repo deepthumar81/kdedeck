@@ -4,6 +4,8 @@ import 'package:kdedeck_mobile/services/websocket_service.dart';
 import 'package:kdedeck_mobile/ui/neumorphic_deck.dart';
 import 'package:provider/provider.dart';
 
+import '../test_support/slow_device_test.dart';
+
 class FakeConnection extends WebSocketService {
   FakeConnection()
       : super(
@@ -156,21 +158,22 @@ void main() {
     final codeField =
         tester.widget<TextField>(find.byKey(const Key('pairingCode')));
     expect(codeField.obscureText, true);
-    await tester.enterText(find.byKey(const Key('pairingCode')), ' ABC-123 ');
-    await tester.tap(find.text('Pair with code'));
+    await tester.enterTextWhenReady(
+        find.byKey(const Key('pairingCode')), ' ABC-123 ');
+    await tester.tapAndWait(find.text('Pair with code'));
     await tester.pump();
     expect(service.code, 'ABC-123');
     expect(service.token, isNull);
     expect(codeField.controller!.text, isEmpty);
 
-    await tester.tap(find.text('Use embedded server token instead'));
+    await tester.tapAndWait(find.text('Use embedded server token instead'));
     await tester.pump();
     final tokenField =
         tester.widget<TextField>(find.byKey(const Key('embeddedToken')));
     expect(tokenField.obscureText, true);
-    await tester.enterText(
+    await tester.enterTextWhenReady(
         find.byKey(const Key('embeddedToken')), ' local-secret ');
-    await tester.tap(find.text('Pair with embedded server token'));
+    await tester.tapAndWait(find.text('Pair with embedded server token'));
     await tester.pump();
     expect(service.token, 'local-secret');
     expect(tokenField.controller!.text, isEmpty);
@@ -192,51 +195,53 @@ void main() {
       'new PCs default to WSS; invalid host, port and LAN plaintext are blocked',
       (tester) async {
     await render(tester);
-    await tester.tap(find.text('Add New PC IP'));
+    await tester.tapAndWait(find.text('Add New PC IP'));
     await animateDialog(tester);
     expect(
         tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, true);
-    await tester.tap(find.text('Save & Connect'));
+    await tester.tapAndWait(find.text('Save & Connect'));
     await tester.pump();
     expect(service.added, isNull);
     expect(
         find.text('Enter a valid host or numeric IP address.'), findsOneWidget);
 
-    await tester.enterText(
+    await tester.enterTextWhenReady(
         find.widgetWithText(TextField, 'Host or IP address'), '127.1');
-    await tester.tap(find.text('Save & Connect'));
+    await tester.tapAndWait(find.text('Save & Connect'));
     await tester.pump();
     expect(service.added, isNull);
 
-    await tester.enterText(
+    await tester.enterTextWhenReady(
         find.widgetWithText(TextField, 'Host or IP address'), 'pc.example');
-    await tester.enterText(find.widgetWithText(TextField, 'Port'), '0');
-    await tester.tap(find.text('Save & Connect'));
+    await tester.enterTextWhenReady(
+        find.widgetWithText(TextField, 'Port'), '0');
+    await tester.tapAndWait(find.text('Save & Connect'));
     await tester.pump();
     expect(find.text('Enter a port between 1 and 65535.'), findsOneWidget);
 
-    await tester.enterText(find.widgetWithText(TextField, 'Port'), '8484');
-    await tester.tap(find.byType(SwitchListTile));
+    await tester.enterTextWhenReady(
+        find.widgetWithText(TextField, 'Port'), '8484');
+    await tester.tapAndWait(find.byType(SwitchListTile));
     await tester.pump();
-    await tester.tap(find.text('Save & Connect'));
+    await tester.tapAndWait(find.text('Save & Connect'));
     await tester.pump();
     expect(service.added, isNull);
     expect(
         find.text('Plaintext is allowed only for numeric loopback addresses.'),
         findsOneWidget);
 
-    await tester.enterText(
+    await tester.enterTextWhenReady(
         find.widgetWithText(TextField, 'Host or IP address'), '127.0.0.1');
-    await tester.tap(find.text('Save & Connect'));
+    await tester.tapAndWait(find.text('Save & Connect'));
     await animateDialog(tester);
     expect(service.added,
         {'name': '', 'ip': '127.0.0.1', 'port': 8484, 'secure': false});
 
-    await tester.tap(find.text('Add New PC IP'));
+    await tester.tapAndWait(find.text('Add New PC IP'));
     await animateDialog(tester);
-    await tester.enterText(
+    await tester.enterTextWhenReady(
         find.widgetWithText(TextField, 'Host or IP address'), '192.168.1.10');
-    await tester.tap(find.text('Save & Connect'));
+    await tester.tapAndWait(find.text('Save & Connect'));
     await animateDialog(tester);
     expect(service.added!['secure'], true);
   });

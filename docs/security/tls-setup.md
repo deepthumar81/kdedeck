@@ -14,8 +14,9 @@ accessible only to the daemon user. Do not commit keys or paste them in chat.
 
 The repository includes a local provisioning helper. It creates a self-signed
 certificate with the requested SANs, restricts the key to mode `0600` on POSIX,
-and writes a SHA-256 fingerprint manifest. It refuses to overwrite existing
-files unless `--force` is supplied for intentional rotation:
+and writes a SHA-256 fingerprint manifest plus a public, certificate-only
+`server.kdedeck-trust.json` enrollment artifact. It refuses to overwrite
+existing files unless `--force` is supplied for intentional rotation:
 
 ```bash
 cd deckboard_daemon/backend
@@ -26,9 +27,10 @@ dart run bin/tls_provision.dart \
 ```
 
 Verify `server.sha256` through a separate trusted local channel before giving
-the certificate to a client or installing it into a device trust store. The
-fingerprint is an identity check; it does not replace normal certificate
-hostname and expiry validation.
+the certificate or `server.kdedeck-trust.json` to a client or installing it
+into a device trust store. The fingerprint is an identity check; it does not
+replace normal certificate hostname and expiry validation. The enrollment
+artifact contains no private key and is safe to copy to the phone for import.
 
 Example invocation from the backend directory, using placeholder paths:
 
@@ -58,15 +60,23 @@ hostname checks are performed by the platform; there is no accept-any-certificat
 option or downgrade to plaintext. A self-signed certificate without provisioned
 trust will show a connection failure **before any pairing code/token is sent**.
 If the phone's platform trust store does not contain the issuer, the connection
-screen offers **Trust a verified certificate** after the first WSS failure. Paste
-the PEM certificate and the `SHA256:` fingerprint from `server.sha256`. The app
-checks that the pasted certificate has that fingerprint, stores it in endpoint-
-scoped secure storage, and still uses the platform's normal hostname and
-validity-period checks. It sends no pairing credential during the failed
-handshake. A different certificate is rejected until **Replace an existing
-certificate** is explicitly selected; replacing first removes the old bearer
-token and requires pairing again. If secure credential deletion fails, the old
-certificate remains trusted and the rotation is reported as failed.
+screen offers **Trust a verified certificate** after the first WSS failure. The
+recommended path is to copy `server.kdedeck-trust.json` from the daemon's TLS
+directory to the phone and choose **Import trust file**. This artifact contains
+only the public certificate and its SHA-256 digest; it never contains the
+private key. The app parses the single certificate, recomputes its digest, and
+rejects a modified or mismatched artifact. Before pressing **Trust certificate**
+the user must compare the displayed `SHA256:` value with the value shown on the
+PC through a separate trusted local channel and tick the confirmation box.
+The PEM/fingerprint paste path remains available as a fallback.
+
+The imported certificate is stored in endpoint-scoped secure storage and the
+connection still uses the platform's normal hostname and validity-period
+checks. It sends no pairing credential during the failed handshake. A
+different certificate is rejected until **Replace an existing certificate** is
+explicitly selected; replacing first removes the old bearer token and requires
+pairing again. If secure credential deletion fails, the old certificate remains
+trusted and the rotation is reported as failed.
 
 Start the standalone daemon with `--pair` in its local interactive terminal, then
 enter that one-time code in the app's **Pair with code** field. Successful pairing
@@ -110,11 +120,10 @@ implementation.
 
 ## Required follow-ups
 
-- User-friendly certificate provisioning and verified server-identity workflow.
-- Verified trust/fingerprint provisioning and device keystore upgrade testing.
+- Physical Android import and verified server-identity workflow testing.
+- Device keystore upgrade testing.
 - Physical Android/Linux LAN pairing and icon/editor end-to-end tests.
 - Physical Android/device-keystore testing and physical LAN verification remain
   open; the Linux suite exercises the client trust boundary but cannot replace
   device-platform QA.
-- Certificate provisioning/fingerprint workflow for standalone and embedded
-  servers, plus physical LAN verification.
+- Physical LAN verification for standalone and embedded servers.

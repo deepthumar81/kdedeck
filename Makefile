@@ -1,10 +1,16 @@
-.PHONY: release-check release-artifact-check tls-smoke test
+.PHONY: release-check release-artifact-check android-signing-check tls-smoke test
+
+APK ?= artifacts/app-release.apk
+SIGNING_MODE ?= allow-debug
 
 release-check:
 	sh scripts/check-release-metadata.sh
 
 release-artifact-check:
 	sh scripts/check-release-artifacts.sh $(ARTIFACT_DIR)
+
+android-signing-check:
+	sh scripts/check-android-signing.sh $(APK) $(SIGNING_MODE)
 
 tls-smoke:
 	cd deckboard_daemon/backend && dart run tool/tls_android_smoke.dart

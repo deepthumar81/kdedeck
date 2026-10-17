@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:test/test.dart';
 
@@ -29,11 +30,22 @@ void main() {
       final certificate = File('${temp.path}/server.crt');
       final key = File('${temp.path}/server.key');
       final manifest = File('${temp.path}/server.sha256');
+      final trustArtifact = File('${temp.path}/server.kdedeck-trust.json');
       expect(await certificate.exists(), isTrue);
       expect(await key.exists(), isTrue);
       expect(await manifest.exists(), isTrue);
+      expect(await trustArtifact.exists(), isTrue);
       expect(await key.length(), greaterThan(0));
       expect(await manifest.readAsString(), startsWith('SHA256:'));
+      final artifact = jsonDecode(await trustArtifact.readAsString()) as Map;
+      expect(artifact['format'], 'kdedeck-trust');
+      expect(artifact['version'], 1);
+      expect(artifact['certificate_pem'], contains('BEGIN CERTIFICATE'));
+      expect(
+        artifact['sha256'],
+        await manifest.readAsString().then((s) => s.trim()),
+      );
+      expect(artifact.containsKey('private_key'), isFalse);
 
       final inspection = await Process.run('openssl', [
         'x509',
@@ -49,6 +61,7 @@ void main() {
         expect(_mode(key.path), '600');
         expect(_mode(certificate.path), '644');
         expect(_mode(manifest.path), '644');
+        expect(_mode(trustArtifact.path), '644');
       }
     },
   );

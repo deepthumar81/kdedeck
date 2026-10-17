@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:file_picker/file_picker.dart';
 import 'dynamic_matrix_grid.dart';
 import 'package:provider/provider.dart';
 import '../services/websocket_service.dart';
@@ -102,6 +103,40 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
     _fingerprintController.clear();
     var replace = false;
     var rotationRequired = false;
+    var artifactImported = false;
+    var fingerprintConfirmed = false;
+    var showManualEntry = false;
+    String? importError;
+
+    Future<void> importArtifact(StateSetter setDialogState) async {
+      try {
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['json', 'kdedeck-trust'],
+          withData: true,
+        );
+        if (result == null || result.files.isEmpty) return;
+        final file = result.files.single;
+        final bytes = file.bytes ??
+            (file.path == null ? null : await File(file.path!).readAsBytes());
+        if (bytes == null || bytes.length > 128 * 1024) {
+          throw const FormatException('Trust file is missing or too large');
+        }
+        final artifact = CertificateTrustArtifact.parse(utf8.decode(bytes));
+        setDialogState(() {
+          _certificateController.text = artifact.certificatePem;
+          _fingerprintController.text = artifact.fingerprint;
+          artifactImported = true;
+          fingerprintConfirmed = false;
+          importError = null;
+        });
+      } on FormatException catch (error) {
+        setDialogState(() => importError = error.message);
+      } catch (_) {
+        setDialogState(() => importError = 'Could not read that trust file.');
+      }
+    }
+
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -112,8 +147,65 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'Compare the SHA-256 fingerprint with the value shown on the PC through a separate trusted channel. Never trust a certificate from the network connection you are trying to secure.',
+                  'Import the certificate-only trust file generated on the PC. Compare its SHA-256 fingerprint with the value shown on the PC through a separate trusted channel before accepting it.',
                 ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: () => importArtifact(setDialogState),
+                  icon: const Icon(Icons.file_open),
+                  label: const Text('Import trust file'),
+                ),
+                if (importError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      importError!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ),
+                if (artifactImported)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Trust file verified locally'),
+                          const SizedBox(height: 6),
+                          SelectableText(
+                            _fingerprintController.text,
+                            key: const Key('importedCertificateFingerprint'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (!artifactImported)
+                  TextButton(
+                    onPressed: () => setDialogState(
+                      () => showManualEntry = !showManualEntry,
+                    ),
+                    child: Text(showManualEntry
+                        ? 'Hide manual entry'
+                        : 'Paste certificate and fingerprint instead'),
+                  ),
+                if (showManualEntry || artifactImported == false && importError != null) ...[
+                  TextField(
+                    controller: _fingerprintController,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: 'SHA-256 fingerprint',
+                    ),
+                  ),
+                  TextField(
+                    controller: _certificateController,
+                    maxLines: 8,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: 'PEM certificate',
+                    ),
+                  ),
+                ],
                 if (rotationRequired)
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
@@ -121,20 +213,13 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                       'The server certificate changed. Confirm the new fingerprint, then explicitly replace the saved certificate. Replacement requires pairing again.',
                     ),
                   ),
-                TextField(
-                  controller: _fingerprintController,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'SHA-256 fingerprint',
+                CheckboxListTile(
+                  value: fingerprintConfirmed,
+                  onChanged: (value) => setDialogState(
+                    () => fingerprintConfirmed = value ?? false,
                   ),
-                ),
-                TextField(
-                  controller: _certificateController,
-                  maxLines: 8,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'PEM certificate',
-                  ),
+                  title: const Text('I compared this fingerprint on the PC'),
+                  contentPadding: EdgeInsets.zero,
                 ),
                 CheckboxListTile(
                   value: replace,
@@ -153,6 +238,14 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
+                if (!fingerprintConfirmed) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Compare the fingerprint on the PC first.'),
+                    ),
+                  );
+                  return;
+                }
                 try {
                   await ws.trustServerCertificate(
                     _certificateController.text.trim(),

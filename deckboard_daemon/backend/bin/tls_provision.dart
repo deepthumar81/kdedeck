@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 const _usage = '''Usage:
@@ -29,10 +30,12 @@ Future<void> main(List<String> arguments) async {
     final certificate = File('${output.path}/server.crt');
     final key = File('${output.path}/server.key');
     final fingerprint = File('${output.path}/server.sha256');
+    final trustArtifact = File('${output.path}/server.kdedeck-trust.json');
     if (!options.force &&
         (certificate.existsSync() ||
             key.existsSync() ||
-            fingerprint.existsSync())) {
+            fingerprint.existsSync() ||
+            trustArtifact.existsSync())) {
       throw StateError(
         'TLS files already exist; use --force only for intentional rotation',
       );
@@ -85,10 +88,22 @@ Future<void> main(List<String> arguments) async {
         .toUpperCase();
     await fingerprint.writeAsString('SHA256:$normalized\n', flush: true);
     _restrict(fingerprint.path, '644');
+    final certificatePem = await certificate.readAsString();
+    await trustArtifact.writeAsString(
+      jsonEncode({
+        'format': 'kdedeck-trust',
+        'version': 1,
+        'certificate_pem': certificatePem,
+        'sha256': 'SHA256:$normalized',
+      }),
+      flush: true,
+    );
+    _restrict(trustArtifact.path, '644');
 
     stdout.writeln('Certificate: ${certificate.path}');
     stdout.writeln('Private key: ${key.path}');
     stdout.writeln('Fingerprint: SHA256:$normalized');
+    stdout.writeln('Phone trust file: ${trustArtifact.path}');
     stdout.writeln(
       'Verify this fingerprint through a trusted local channel before trusting the certificate.',
     );
