@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kdedeck_mobile/services/websocket_service.dart';
+import 'package:kdedeck_mobile/services/onboarding_service.dart';
 import 'package:kdedeck_mobile/ui/neumorphic_deck.dart';
 import 'package:provider/provider.dart';
 
@@ -61,6 +62,20 @@ class FakeConnection extends WebSocketService {
   }
 }
 
+class FakeDiscovery implements HostDiscovery {
+  FakeDiscovery(this.hosts, {this.delay = Duration.zero});
+  final List<DiscoveredHost> hosts;
+  final Duration delay;
+
+  @override
+  Future<List<DiscoveredHost>> discover({
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    await Future<void>.delayed(delay);
+    return hosts;
+  }
+}
+
 void main() {
   late FakeConnection service;
 
@@ -71,6 +86,17 @@ void main() {
     await tester.pumpWidget(ChangeNotifierProvider<WebSocketService>.value(
       value: service,
       child: const MaterialApp(home: NeumorphicDeckScreen()),
+    ));
+    await tester.pump();
+  }
+
+  Future<void> renderOnboarding(
+    WidgetTester tester, {
+    HostDiscovery discovery = const AndroidHostDiscovery(),
+  }) async {
+    await tester.pumpWidget(ChangeNotifierProvider<WebSocketService>.value(
+      value: service,
+      child: MaterialApp(home: NeumorphicDeckScreen(discovery: discovery)),
     ));
     await tester.pump();
   }
@@ -189,6 +215,47 @@ void main() {
     await tester.pump();
     expect(find.text('Pairing code expired. Request a new code on your PC.'),
         findsOneWidget);
+  });
+
+  testWidgets('nearby discovery is camera-less and selects a TLS host',
+      (tester) async {
+    service.change(pairing: true);
+    await renderOnboarding(tester,
+        discovery: FakeDiscovery([
+          const DiscoveredHost(
+              name: 'Kitchen PC', host: '192.168.1.40', port: 8484),
+        ]));
+    await tester.tapAndWait(find.byKey(const Key('discoverNearby')));
+    expect(find.text('Kitchen PC'), findsOneWidget);
+    await tester.tapAndWait(find.text('Kitchen PC'));
+    expect(service.selected, {
+      'name': 'Kitchen PC',
+      'ip': '192.168.1.40',
+      'port': 8484,
+      'secure': true,
+    });
+  });
+
+  testWidgets('slow discovery shows a bounded wait and remains usable',
+      (tester) async {
+    service.change(pairing: true);
+    await renderOnboarding(tester,
+        discovery:
+            FakeDiscovery(const [], delay: const Duration(milliseconds: 250)));
+    await tester.tapAndWait(find.byKey(const Key('discoverNearby')));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(find.byKey(const Key('onboardingMessage')), findsOneWidget);
+    expect(find.byKey(const Key('pairingCode')), findsOneWidget);
+  });
+
+  testWidgets('QR scanner can be cancelled back to the short-code fallback',
+      (tester) async {
+    service.change(pairing: true);
+    await renderOnboarding(tester);
+    await tester.tapAndWait(find.byKey(const Key('scanEnrollmentQr')));
+    expect(find.text('Scan PC enrollment QR'), findsOneWidget);
+    await tester.tapAndWait(find.text('Cancel'));
+    expect(find.byKey(const Key('pairingCode')), findsOneWidget);
   });
 
   testWidgets(

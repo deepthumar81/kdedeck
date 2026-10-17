@@ -79,6 +79,22 @@ void main() {
     },
   );
 
+  test('tray health and loopback pairing routes stay local', () async {
+    server = _newServer(fixtureRoot, outsideRoot)
+      ..configureLocalPairingRoute(enabled: true);
+    await server!.startServer();
+
+    final health = await _get(server!, '/healthz');
+    expect(health.statusCode, HttpStatus.ok);
+    expect(jsonDecode(health.body), containsPair('status', 'ok'));
+
+    final pairing = await _get(server!, '/pairing');
+    expect(pairing.statusCode, HttpStatus.ok);
+    final payload = jsonDecode(pairing.body) as Map<String, dynamic>;
+    expect(payload['code'], isA<String>());
+    expect(payload['expires_at'], isA<String>());
+  });
+
   test(
     'serves same-origin static GETs independently of WebSocket Origin',
     () async {

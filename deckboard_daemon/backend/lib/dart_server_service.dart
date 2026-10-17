@@ -10,6 +10,7 @@ import 'auth_rate_limiter.dart';
 import 'auth_session_manager.dart';
 import 'command_executor.dart';
 import 'config_validator.dart';
+import 'enrollment_protocol.dart';
 import 'protocol_metadata.dart';
 import 'server_tls.dart';
 import 'session_store.dart';
@@ -126,7 +127,8 @@ class DartServerService {
       _webSocketRateLimiter = WebSocketRateLimiter(),
       _metricsInterval = const Duration(seconds: 4),
       _configWriter = null,
-      _systemIconRoots = List.unmodifiable(SystemActionsService.linuxIconRoots);
+      _systemIconRoots = List.unmodifiable(SystemActionsService.linuxIconRoots),
+      _enrollmentChallenges = EnrollmentChallengeStore();
 
   /// Creates an isolated server for protocol tests.
   ///
@@ -167,6 +169,8 @@ class DartServerService {
     Duration metricsInterval = const Duration(seconds: 4),
     Future<bool> Function(Map<String, dynamic>, Map<String, dynamic>?)?
     configWriter,
+    EnrollmentChallengeStore? enrollmentChallengeStore,
+    String? enrollmentCertificateSha256,
   }) : port = port,
        _bindAddress = bindAddress ?? InternetAddress.loopbackIPv4,
        _bindAddressOverride = bindAddress,
@@ -230,6 +234,9 @@ class DartServerService {
        _systemIconRoots = List.unmodifiable(
          systemIconRoots ?? SystemActionsService.linuxIconRoots,
        ) {
+    _enrollmentChallenges =
+        enrollmentChallengeStore ?? EnrollmentChallengeStore(clock: clock);
+    _enrollmentCertificateSha256 = enrollmentCertificateSha256;
     if (authSessionManager != null && sessionStoreFactory != null) {
       throw ArgumentError(
         'authSessionManager and sessionStoreFactory are mutually exclusive',
@@ -267,11 +274,14 @@ class DartServerService {
   final WebSocketRateLimiter _webSocketRateLimiter;
   final Duration _metricsInterval;
   final List<String> _systemIconRoots;
+  late final EnrollmentChallengeStore _enrollmentChallenges;
+  String? _enrollmentCertificateSha256;
   final Future<bool> Function(Map<String, dynamic>, Map<String, dynamic>?)?
   _configWriter;
   Future<void> _saveOperation = Future<void>.value();
   bool isRunning = false;
   bool isSecure = false;
+  bool _localPairingRouteEnabled = false;
   int port;
   int _pendingConnections = 0;
   int _lifecycleGeneration = 0;
@@ -279,6 +289,22 @@ class DartServerService {
   final Set<WebSocket> _oversizedFrameClosing = <WebSocket>{};
   final Map<WebSocket, int> _oversizedFrameViolations = <WebSocket, int>{};
   String? _canonicalFrontendRoot;
+
+  /// Issues a short-lived, single-use public enrollment payload.
+  ///
+  /// The payload is intentionally available only when the listener has TLS;
+  /// clients must still validate the certificate identity before pairing.
+  EnrollmentPayload? issueEnrollmentPayload({String? host}) {
+    if (!isRunning || !isSecure) return null;
+    final resolvedHost = host ?? _bindAddress.address;
+    final fingerprint = _enrollmentCertificateSha256;
+    if (fingerprint == null) return null;
+    return _enrollmentChallenges.issue(
+      host: resolvedHost,
+      port: port,
+      certificateSha256: fingerprint,
+    );
+  }
 
   /// The effective address selected for the next server start.
   InternetAddress get bindAddress => _bindAddress;
@@ -305,6 +331,12 @@ class DartServerService {
   /// credentials or request payloads are part of this configuration seam.
   void configureSensitiveActionPolicy(SensitiveActionPolicy policy) {
     _sensitiveActionPolicy = policy;
+  }
+
+  /// Enables the tray's loopback-only pairing helper. Pairing material is
+  /// returned only to a local dashboard request and is never logged or stored.
+  void configureLocalPairingRoute({required bool enabled}) {
+    _localPairingRouteEnabled = enabled;
   }
 
   /// Issues a new one-time code for a local, already-running daemon.
@@ -538,6 +570,13 @@ class DartServerService {
         _environment,
         requireTls: !_bindAddress.isLoopback,
       );
+      if (context != null) {
+        final certificatePath = _environment['KDEDECK_TLS_CERT_FILE'];
+        if (certificatePath != null) {
+          final pem = await File(certificatePath).readAsString();
+          _enrollmentCertificateSha256 = certificateSha256FromPem(pem);
+        }
+      }
       _server = context == null
           ? await HttpServer.bind(_bindAddress, port)
           : await HttpServer.bindSecure(_bindAddress, port, context);
@@ -593,7 +632,14 @@ class DartServerService {
       return;
     }
     _applyHttpResponsePolicy(request.response);
-    if (request.uri.path == '/ws') {
+    if (request.uri.path == '/healthz') {
+      request.response
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'status': 'ok', 'secure': isSecure}));
+      await request.response.close();
+    } else if (request.uri.path == '/pairing' && _localPairingRouteEnabled) {
+      await _serveLocalPairing(request);
+    } else if (request.uri.path == '/ws') {
       if (!_originMatchesRequestHost(request)) {
         await _rejectInvalidOrigin(request);
         return;
@@ -618,6 +664,33 @@ class DartServerService {
           _pendingConnections--;
         }
       }
+    } else if (request.uri.path == '/enrollment') {
+      if (request.method != 'GET' || !isSecure) {
+        request.response
+          ..statusCode = HttpStatus.notFound
+          ..headers.contentLength = 0;
+        await request.response.close();
+        return;
+      }
+      final authority = request.headers.value(HttpHeaders.hostHeader);
+      final endpoint = authority == null
+          ? null
+          : _parseHostEndpoint(authority, 'https');
+      final payload = endpoint == null
+          ? null
+          : issueEnrollmentPayload(host: endpoint.host);
+      if (payload == null) {
+        request.response
+          ..statusCode = HttpStatus.serviceUnavailable
+          ..headers.contentLength = 0;
+        await request.response.close();
+        return;
+      }
+      final bytes = utf8.encode(payload.encode());
+      request.response
+        ..headers.contentType = ContentType.json
+        ..headers.contentLength = bytes.length;
+      await _serveHttpBytes(request, bytes, generation);
     } else if (request.uri.path == '/system_icons' ||
         request.uri.path == '/system_icons/') {
       try {
@@ -690,6 +763,39 @@ class DartServerService {
           await _closeHttpResponse(request.response);
         }
       }
+    }
+  }
+
+  Future<void> _serveLocalPairing(HttpRequest request) async {
+    final remoteAddress = request.connectionInfo?.remoteAddress;
+    final isLoopback =
+        remoteAddress != null &&
+        (remoteAddress.isLoopback ||
+            remoteAddress.address == InternetAddress.loopbackIPv4.address ||
+            remoteAddress.address == InternetAddress.loopbackIPv6.address);
+    if (request.method != 'GET' || !isLoopback) {
+      request.response
+        ..statusCode = HttpStatus.notFound
+        ..headers.contentLength = 0;
+      await request.response.close();
+      return;
+    }
+    try {
+      final issued = issueLocalPairingCode();
+      request.response
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode({
+            'code': issued.code,
+            'expires_at': issued.expiresAt.toUtc().toIso8601String(),
+          }),
+        );
+      await request.response.close();
+    } catch (_) {
+      request.response
+        ..statusCode = HttpStatus.serviceUnavailable
+        ..headers.contentLength = 0;
+      await request.response.close();
     }
   }
 

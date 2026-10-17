@@ -10,6 +10,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
 
 import 'credential_store.dart';
+import 'onboarding_service.dart';
 
 typedef SocketConnector = WebSocketChannel Function(Uri uri);
 typedef TrustedSocketConnector = WebSocketChannel Function(
@@ -158,6 +159,7 @@ class WebSocketService extends ChangeNotifier {
   bool _authRequested = false;
   String? _pairingToken;
   String? _pairingCode;
+  EnrollmentInvite? _pendingEnrollment;
   String? _attemptedToken;
   bool _attemptedCode = false;
   Future<void> _frameQueue = Future<void>.value();
@@ -413,6 +415,53 @@ class WebSocketService extends ChangeNotifier {
   /// Exchange a one-time standalone pairing code for an issued bearer token.
   Future<void> pairWithCode(String code) => _pair(code, code: true);
 
+  /// Apply a daemon-issued invitation and immediately exchange its one-time
+  /// code. The certificate is verified against the invitation digest before it
+  /// is stored; TLS still performs normal hostname and expiry validation.
+  Future<void> enroll(EnrollmentInvite invite) async {
+    final endpoint = _Endpoint(invite.host, invite.port, true);
+    _stopCurrent();
+    serverIp = invite.host;
+    serverPort = invite.port;
+    _secureOverride = true;
+    activeServerName = invite.name.isEmpty ? 'KDE Deck PC' : invite.name;
+    savedServers.removeWhere((server) =>
+        server['ip'] == invite.host && server['port'] == invite.port);
+    savedServers.add({
+      'name': activeServerName,
+      'ip': invite.host,
+      'port': invite.port,
+      'secure': true,
+    });
+    await _saveServersToPrefs();
+    _activeEndpoint = endpoint;
+    _pendingEnrollment = invite;
+    authError = null;
+    authRequired = true;
+    status = 'auth_required';
+    notifyListeners();
+    try {
+      await _credentialStore.delete(endpoint.key);
+    } catch (_) {
+      _pendingEnrollment = null;
+      authError = 'credential_unavailable';
+      notifyListeners();
+      return;
+    }
+    connect();
+  }
+
+  /// Select a discovered TLS service, leaving the user at the short-code
+  /// prompt. Discovery never supplies trust by itself.
+  Future<void> selectDiscoveredHost(DiscoveredHost host) async {
+    await selectServer({
+      'name': host.name,
+      'ip': host.host,
+      'port': host.port,
+      'secure': true,
+    });
+  }
+
   /// Trust a certificate only after the caller has independently verified its
   /// fingerprint. Replacing an existing certificate is always explicit.
   Future<void> trustServerCertificate(
@@ -568,6 +617,7 @@ class WebSocketService extends ChangeNotifier {
     _rejectCredential(key);
     _pairingToken = null;
     _pairingCode = null;
+    _pendingEnrollment = null;
     _attemptedToken = null;
     _restart(authNeeded: true);
     final generation = _generation;
@@ -854,10 +904,12 @@ class WebSocketService extends ChangeNotifier {
     if (_attemptedToken == credential && _attemptedCode == code) return;
     _attemptedToken = credential;
     _attemptedCode = code;
+    final enrollment = _pendingEnrollment;
     channel.sink.add(jsonEncode({
       'type': 'authenticate',
       'protocol_version': 1,
-      code ? 'pairing_code' : 'token': credential,
+      if (enrollment != null) 'enrollment': enrollment.toJson(),
+      if (enrollment == null) code ? 'pairing_code' : 'token': credential,
     }));
     status = 'authenticating';
     notifyListeners();
@@ -914,7 +966,10 @@ class WebSocketService extends ChangeNotifier {
         return;
       }
       if (generation != _generation || _disposed) return;
-      if (credential != null && credential.isNotEmpty) {
+      final enrollment = _pendingEnrollment;
+      if (enrollment != null) {
+        await _sendAuthentication(enrollment.challenge, true, generation);
+      } else if (credential != null && credential.isNotEmpty) {
         await _sendAuthentication(credential, code, generation);
       }
     } else if (type == 'auth_success') {
@@ -954,6 +1009,7 @@ class WebSocketService extends ChangeNotifier {
       if (_disposed || generation != _generation) return;
       _pairingCode = null;
       _pairingToken = null;
+      _pendingEnrollment = null;
       authenticated = true;
       authRequired = false;
       authError = null;
@@ -1093,6 +1149,7 @@ class WebSocketService extends ChangeNotifier {
     _rejectCredential(key);
     _pairingToken = null;
     _pairingCode = null;
+    _pendingEnrollment = null;
     authError = code;
     _restart(authNeeded: true);
     try {

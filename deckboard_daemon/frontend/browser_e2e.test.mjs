@@ -80,12 +80,17 @@ globalThis.window = {
     location: {
         protocol: 'http:',
         host: 'localhost:8484',
+        search: '',
         reload: () => reloads.push(true),
     },
     setTimeout,
     clearTimeout,
 };
 globalThis.WebSocket = FakeWebSocket;
+globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ code: 'ALPHA-PAIR', expires_at: '2030-01-01T00:00:00.000Z' }),
+});
 
 await import(`./app.js?browser-e2e=${Date.now()}`);
 
@@ -133,4 +138,13 @@ test('browser authenticated errors preserve bounded recovery state', () => {
     assert.equal(elements.get('reload-config-btn').style.display, 'block');
     assert.equal(elements.get('reload-config-btn').disabled, false);
     assert.equal(reloads.length, 0);
+});
+
+test('tray pairing panel provides a camera-less code and local payload', async () => {
+    const requestButton = elements.get('request-pairing-btn');
+    requestButton.dispatch('click');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(elements.get('pairing-code-display').textContent, 'ALPHA-PAIR');
+    assert.match(elements.get('pairing-payload').textContent, /kdedeck:\/\/pair\?origin=/);
+    assert.match(elements.get('pairing-expires').textContent, /Expires/);
 });

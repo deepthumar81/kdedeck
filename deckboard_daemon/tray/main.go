@@ -1,15 +1,26 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
+
 	"github.com/getlantern/systray"
 )
 
+const dashboardURL = "http://127.0.0.1:8484/?tray=1"
+
 var backendCmd *exec.Cmd
+
+var (
+	commandRunner = exec.Command
+	openURL       = openBrowser
+)
 
 func main() {
 	systray.Run(onReady, onExit)
@@ -17,21 +28,21 @@ func main() {
 
 func onReady() {
 	systray.SetTitle("Deckboard")
-	systray.SetTooltip("Deckboard Daemon is running")
-	// systray.SetIcon(iconData) // Using text title for simplicity if no icon provided
+	systray.SetTooltip("Deckboard Daemon")
 
 	mOpen := systray.AddMenuItem("Open Dashboard", "Open the configurator in your browser")
+	mPair := systray.AddMenuItem("Pair a Device", "Open the pairing panel with a one-time code")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Stop the server and quit")
 
-	// Start the backend Dart process
-	go startBackend()
-
+	go startBackendAndOpen()
 	go func() {
 		for {
 			select {
 			case <-mOpen.ClickedCh:
-				openBrowser("http://localhost:8484")
+				_ = openURL(dashboardURL)
+			case <-mPair.ClickedCh:
+				_ = openURL(dashboardURL + "#pairing")
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
@@ -41,60 +52,108 @@ func onReady() {
 }
 
 func onExit() {
-	// Clean up the backend process
 	if backendCmd != nil && backendCmd.Process != nil {
-		fmt.Println("Shutting down backend process...")
-		backendCmd.Process.Kill()
+		_ = backendCmd.Process.Kill()
 	}
 }
 
-func startBackend() {
-	// In development, we run the dart script. 
-	// In production, we would execute the compiled binary.
-	// We'll check if a compiled binary exists, otherwise fallback to dart run.
-	
-	dir, err := os.Getwd()
-	if err != nil {
-		fmt.Println("Error getting wd:", err)
+func startBackendAndOpen() {
+	if err := startBackend(); err != nil {
+		fmt.Fprintf(os.Stderr, "Deckboard daemon could not start: %v\n", err)
 		return
 	}
-	
-	backendDir := filepath.Join(dir, "..", "backend")
-	
-	// Check if compiled binary exists
-	binaryPath := filepath.Join(backendDir, "kdedeck_daemon")
-	if _, err := os.Stat(binaryPath); err == nil {
-		fmt.Println("Found compiled binary, executing native daemon...")
-		backendCmd = exec.Command("./kdedeck_daemon")
-	} else {
-		fmt.Println("Compiled binary not found, falling back to Dart SDK...")
-		backendCmd = exec.Command("dart", "run", "bin/backend.dart")
+	if err := waitForReady(10 * time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "Deckboard daemon is not ready: %v\n", err)
+		// Keep a still-running secure/LAN daemon alive: its endpoint may not be
+		// reachable through the loopback HTTP probe, but Quit can still own it.
+		if backendCmd != nil && backendCmd.Process != nil && backendCmd.ProcessState != nil {
+			_ = backendCmd.Process.Kill()
+		}
+		return
 	}
-
-	backendCmd.Dir = backendDir
-	backendCmd.Stdout = os.Stdout
-	backendCmd.Stderr = os.Stderr
-
-	fmt.Println("Starting Deckboard Dart Backend...")
-	err = backendCmd.Run()
-	if err != nil {
-		fmt.Println("Backend process exited with error:", err)
+	if err := openURL(dashboardURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open the Deckboard dashboard: %v\n", err)
 	}
 }
 
-func openBrowser(url string) {
-	var err error
+func startBackend() error {
+	root, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locating tray executable: %w", err)
+	}
+	trayDir := filepath.Dir(root)
+	backendDir := filepath.Clean(filepath.Join(trayDir, "..", "backend"))
+	// `go run` places the temporary executable outside the checkout. Keep
+	// development runs portable while installed tray builds remain relative
+	// to their own executable.
+	if _, statErr := os.Stat(backendDir); statErr != nil {
+		if workingDir, workingErr := os.Getwd(); workingErr == nil {
+			for _, candidate := range []string{
+				filepath.Join(workingDir, "backend"),
+				filepath.Join(workingDir, "..", "backend"),
+			} {
+				if _, candidateErr := os.Stat(candidate); candidateErr == nil {
+					backendDir = filepath.Clean(candidate)
+					break
+				}
+			}
+		}
+	}
+	binaryPath := filepath.Join(backendDir, "kdedeck_daemon")
+	var cmd *exec.Cmd
+	if _, statErr := os.Stat(binaryPath); statErr == nil {
+		cmd = commandRunner(binaryPath, "--tray")
+	} else {
+		cmd = commandRunner("dart", "run", "bin/backend.dart", "--tray")
+	}
+	cmd.Dir = backendDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	backendCmd = cmd
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+func waitForReady(timeout time.Duration) error {
+	return waitForReadyURL("http://127.0.0.1:8484/healthz", timeout)
+}
+
+func waitForReadyURL(endpoint string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 750 * time.Millisecond}
+	for {
+		response, requestErr := client.Do(request.Clone(ctx))
+		if requestErr == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("readiness check timed out")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func openBrowser(url string) error {
 	switch runtime.GOOS {
 	case "linux":
-		err = exec.Command("xdg-open", url).Start()
+		return exec.Command("xdg-open", url).Start()
 	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 	case "darwin":
-		err = exec.Command("open", url).Start()
+		return exec.Command("open", url).Start()
 	default:
-		err = fmt.Errorf("unsupported platform")
-	}
-	if err != nil {
-		fmt.Printf("Error opening browser: %v\n", err)
+		return fmt.Errorf("unsupported platform")
 	}
 }

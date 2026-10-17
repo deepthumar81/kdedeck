@@ -135,12 +135,14 @@ Future<int> startLocalDaemon(
   required LocalPairingConsole console,
   required void Function(String) writeError,
 }) async {
-  if (arguments.isNotEmpty &&
-      !(arguments.length == 1 && arguments.single == '--pair')) {
-    writeError('Usage: backend [--pair]');
+  const acceptedArguments = {'--pair', '--tray'};
+  if (arguments.any((argument) => !acceptedArguments.contains(argument)) ||
+      arguments.toSet().length != arguments.length ||
+      arguments.length > acceptedArguments.length) {
+    writeError('Usage: backend [--pair] [--tray]');
     return 2;
   }
-  final pairOnStart = arguments.isNotEmpty;
+  final pairOnStart = arguments.contains('--pair');
   if (pairOnStart && !console.hasInteractiveTerminal) {
     writeError('Pairing requires an interactive stdin and stdout terminal.');
     return 2;

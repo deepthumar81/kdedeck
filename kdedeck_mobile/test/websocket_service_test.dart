@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kdedeck_mobile/services/credential_store.dart';
 import 'package:kdedeck_mobile/services/websocket_service.dart';
+import 'package:kdedeck_mobile/services/onboarding_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -229,6 +230,37 @@ void main() {
       'protocol_version': 1,
       'token': 'issued-bearer',
     });
+  });
+
+  test('enrollment sends the bound challenge and never stores a pairing secret',
+      () async {
+    service.serverIp = '127.0.0.1';
+    service.serverPort = 8484;
+    service.secureConnection = true;
+    final issued = DateTime.now().toUtc();
+    final invite = EnrollmentInvite(
+      version: 1,
+      host: '127.0.0.1',
+      port: 8484,
+      certificateSha256: 'a' * 64,
+      challenge: 'challenge_123',
+      issuedAt: issued,
+      expiresAt: issued.add(const Duration(minutes: 1)),
+    );
+
+    await service.enroll(invite);
+    await settle();
+    sockets.last.receive({'type': 'auth_required'});
+    await settle();
+    expect(sockets.last.outbound.sent.single, {
+      'type': 'authenticate',
+      'protocol_version': 1,
+      'enrollment': invite.toJson(),
+    });
+    expect(certificates.values, isEmpty);
+    sockets.last.receive({'type': 'auth_error', 'code': 'expired'});
+    await settle();
+    expect(service.authError, 'expired');
   });
 
   test('certificate trust requires a matching fingerprint', () async {

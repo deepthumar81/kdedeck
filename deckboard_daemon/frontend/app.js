@@ -36,6 +36,13 @@ const authForm = document.getElementById('auth-form');
 const pairingCodeInput = document.getElementById('pairing-code');
 const authErrorEl = document.getElementById('auth-error');
 const reloadConfigBtn = document.getElementById('reload-config-btn');
+const localPairingPanel = document.getElementById('local-pairing-panel');
+const requestPairingBtn = document.getElementById('request-pairing-btn');
+const pairingPayloadEl = document.getElementById('pairing-payload');
+const pairingCodeDisplay = document.getElementById('pairing-code-display');
+const pairingExpires = document.getElementById('pairing-expires');
+const copyPairingBtn = document.getElementById('copy-pairing-btn');
+let localPairingRequested = false;
 
 function availableStorages() {
     const storages = [];
@@ -127,6 +134,36 @@ function showAuthModal(message = '') {
     authModal.setAttribute('aria-hidden', 'false');
     authErrorEl.textContent = message;
     if (!message) pairingCodeInput.focus();
+}
+
+function isTrayDashboard() {
+    return new URLSearchParams(window.location.search).get('tray') === '1';
+}
+
+async function requestLocalPairingCode() {
+    if (localPairingRequested) return;
+    localPairingRequested = true;
+    requestPairingBtn.disabled = true;
+    requestPairingBtn.textContent = 'Loading local code...';
+    try {
+        const response = await fetch('/pairing', { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Pairing is available only from the local tray dashboard.');
+        const pairing = await response.json();
+        if (typeof pairing.code !== 'string' || typeof pairing.expires_at !== 'string') throw new Error('The daemon returned an invalid pairing response.');
+        pairingCodeInput.value = pairing.code;
+        pairingCodeDisplay.textContent = pairing.code;
+        pairingExpires.textContent = `Expires ${new Date(pairing.expires_at).toLocaleTimeString()} (one use only)`;
+        pairingPayloadEl.textContent = `kdedeck://pair?origin=${window.location.origin}&code=${pairing.code}`;
+        localPairingPanel.hidden = false;
+        requestPairingBtn.textContent = 'New local pairing code';
+        localPairingRequested = false;
+        requestPairingBtn.disabled = false;
+    } catch (error) {
+        requestPairingBtn.disabled = false;
+        requestPairingBtn.textContent = 'Show local pairing code';
+        localPairingRequested = false;
+        authErrorEl.textContent = error instanceof Error ? error.message : 'Could not load a local pairing code.';
+    }
 }
 
 function hideAuthModal() {
@@ -315,7 +352,22 @@ authForm.addEventListener('submit', (event) => {
     }));
 });
 
+requestPairingBtn.addEventListener('click', requestLocalPairingCode);
+copyPairingBtn.addEventListener('click', async () => {
+    if (!pairingPayloadEl.textContent) return;
+    try {
+        await navigator.clipboard.writeText(pairingPayloadEl.textContent);
+        copyPairingBtn.textContent = 'Copied pairing payload';
+        window.setTimeout(() => { copyPairingBtn.textContent = 'Copy pairing payload'; }, 1600);
+    } catch (_) {
+        authErrorEl.textContent = 'Copy is unavailable; select the pairing payload manually.';
+    }
+});
+
 connectWebSocket();
+if (isTrayDashboard()) {
+    requestLocalPairingCode();
+}
 
 // Save Logic
 autoSaveToggle.addEventListener('change', (e) => {

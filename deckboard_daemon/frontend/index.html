@@ -94,6 +94,20 @@
                     <label for="pairing-code">Pairing code</label>
                     <input type="password" id="pairing-code" autocomplete="one-time-code" spellcheck="false">
                 </div>
+                <section id="local-pairing-panel" class="local-pairing-panel" hidden>
+                    <div class="pairing-panel-heading">
+                        <span class="material-symbols-outlined">qr_code_2</span>
+                        <strong>QR pairing option</strong>
+                    </div>
+                    <p class="pairing-panel-copy">Copy this pairing payload into a QR-capable device or pairing tool. It stays local to this dashboard.</p>
+                    <code id="pairing-payload" class="pairing-payload"></code>
+                    <button type="button" id="copy-pairing-btn" class="btn-secondary">Copy pairing payload</button>
+                    <p id="pairing-code-hint" class="pairing-code-hint">Camera-less fallback: use the one-time code below.</p>
+                    <output id="pairing-code-display" class="pairing-code-display" aria-live="polite"></output>
+                    <p id="pairing-expires" class="pairing-expires"></p>
+                    <p class="manual-pairing-hint">Manual fallback: run <code>kdedeck_daemon --pair</code> in an interactive terminal and enter the code here.</p>
+                </section>
+                <button type="button" id="request-pairing-btn" class="btn-secondary">Show local pairing code</button>
                 <p id="auth-error" class="auth-error" role="alert" aria-live="polite"></p>
                 <div class="modal-actions">
                     <button type="submit" class="btn-primary">Connect</button>

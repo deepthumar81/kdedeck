@@ -360,6 +360,19 @@ button {
     line-height: 1.4;
 }
 
+.local-pairing-panel {
+    border: 1px solid rgba(79, 172, 254, 0.45);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin: 1rem 0;
+    background: rgba(79, 172, 254, 0.08);
+}
+.pairing-panel-heading { display: flex; align-items: center; gap: 0.5rem; color: var(--accent-color); margin-bottom: 0.5rem; }
+.pairing-panel-copy, .pairing-code-hint, .pairing-expires, .manual-pairing-hint { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.4; margin: 0.5rem 0; }
+.pairing-payload { display: block; overflow-wrap: anywhere; background: var(--bg-color); padding: 0.6rem; border-radius: 0.4rem; color: var(--text-primary); font-size: 0.75rem; margin: 0.75rem 0; }
+.pairing-code-display { display: block; letter-spacing: 0.22em; font-size: 1.45rem; font-weight: 700; color: var(--text-primary); margin: 0.5rem 0; }
+.manual-pairing-hint code { color: var(--text-primary); }
+
 .form-group {
     margin-bottom: 1rem;
 }

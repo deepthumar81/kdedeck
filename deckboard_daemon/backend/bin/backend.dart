@@ -18,10 +18,12 @@ Future<void> main(List<String> arguments) async {
   }
   final console = LocalPairingConsole.system();
   DartServerService? server;
+  final trayMode = arguments.contains('--tray');
   final status = await startLocalDaemon(
     arguments,
     startServer: () async {
       server = DartServerService();
+      server!.configureLocalPairingRoute(enabled: trayMode);
       await server!.startServer();
     },
     stopServer: () => server!.stopServer(),

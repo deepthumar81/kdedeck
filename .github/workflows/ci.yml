@@ -127,11 +127,8 @@ jobs:
       - name: Collect artifacts
         run: cp kdedeck_mobile/build/app/outputs/flutter-apk/app-release.apk artifacts/
 
-      - name: Validate release artifacts
-        run: sh scripts/check-release-artifacts.sh artifacts
-
-      - name: Validate APK signature
-        run: sh scripts/check-android-signing.sh artifacts/app-release.apk
+      - name: Validate alpha release readiness
+        run: make alpha-readiness-check ARTIFACT_DIR=artifacts SIGNING_MODE=allow-debug
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
