@@ -127,6 +127,9 @@ jobs:
       - name: Collect artifacts
         run: cp kdedeck_mobile/build/app/outputs/flutter-apk/app-release.apk artifacts/
 
+      - name: Validate release artifacts
+        run: sh scripts/check-release-artifacts.sh artifacts
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:

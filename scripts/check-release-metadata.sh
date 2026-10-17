@@ -33,11 +33,13 @@ node_pin=$(read_pin "$root/.nvmrc")
 
 backend_pubspec="$root/deckboard_daemon/backend/pubspec.yaml"
 mobile_pubspec="$root/kdedeck_mobile/pubspec.yaml"
+android_gradle="$root/kdedeck_mobile/android/app/build.gradle.kts"
 metadata="$root/deckboard_daemon/backend/lib/release_metadata.dart"
 changelog="$root/deckboard_daemon/backend/CHANGELOG.md"
 
 require_file "$backend_pubspec" 'backend pubspec.yaml'
 require_file "$mobile_pubspec" 'mobile pubspec.yaml'
+require_file "$android_gradle" 'Android app Gradle build file'
 require_file "$metadata" 'release metadata'
 require_file "$changelog" 'backend changelog'
 require_file "$root/deckboard_daemon/backend/pubspec.lock" 'backend pubspec.lock'
@@ -48,15 +50,24 @@ backend_package_version=$(read_yaml_version "$backend_pubspec")
 mobile_package_version=$(read_yaml_version "$mobile_pubspec")
 metadata_version=$(sed -n "s/^[[:space:]]*static const String version = '\([^']*\)';/\1/p" "$metadata")
 metadata_build=$(sed -n "s/^[[:space:]]*static const int build = \([0-9][0-9]*\);/\1/p" "$metadata")
+android_version_code=$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$android_gradle")
+android_version_name=$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' "$android_gradle")
 
 [ -n "$backend_package_version" ] || fail 'backend package version is missing'
 [ -n "$mobile_package_version" ] || fail 'mobile package version is missing'
 [ -n "$metadata_version" ] || fail 'release metadata version is missing'
 [ -n "$metadata_build" ] || fail 'release metadata build is missing'
+[ -n "$android_version_code" ] || fail 'Android versionCode is missing'
+[ -n "$android_version_name" ] || fail 'Android versionName is missing'
 
 case "$backend_package_version" in
   *+*) ;;
   *) fail "backend package version must include a build number: $backend_package_version" ;;
+esac
+
+case "$mobile_package_version" in
+  *+*) ;;
+  *) fail "mobile package version must include a build number: $mobile_package_version" ;;
 esac
 
 package_version=${backend_package_version%+*}
@@ -68,6 +79,10 @@ package_build=${backend_package_version#*+}
   fail "release metadata version differs from backend package ($metadata_version vs $package_version)"
 [ "$metadata_build" = "$package_build" ] || \
   fail "release metadata build differs from backend package ($metadata_build vs $package_build)"
+[ "$android_version_name" = "$package_version" ] || \
+  fail "Android versionName differs from mobile package ($android_version_name vs $package_version)"
+[ "$android_version_code" = "$package_build" ] || \
+  fail "Android versionCode differs from mobile package ($android_version_code vs $package_build)"
 
 grep -Fq "## $metadata_version" "$changelog" || \
   fail "changelog has no $metadata_version release heading"

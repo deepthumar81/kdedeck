@@ -202,6 +202,14 @@ cd kdedeck_mobile
 flutter build apk --release
 ```
 
+Validate the locally built files before distributing them (the command expects
+`artifacts/kdedeck_daemon` and `artifacts/app-release.apk`; CI performs this
+same check before upload):
+
+```bash
+make release-artifact-check ARTIFACT_DIR=artifacts
+```
+
 ### Docker build and run
 
 Build the standalone daemon image from the repository root:

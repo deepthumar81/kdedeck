@@ -72,6 +72,26 @@ Dart daemon -> Linux actions
 Destructive actions such as shutdown, logout, and suspend are never run against
 the developer workstation during automated tests.
 
+### TLS and Android forwarding smoke check
+
+Run the portable offline smoke check from the repository root after Dart
+dependencies are installed:
+
+```bash
+make tls-smoke
+```
+
+The check creates a one-day self-signed certificate and private key below a
+runtime temporary directory, starts an isolated Dart daemon on an ephemeral
+port, verifies a trusted WSS handshake and one-time pairing exchange, and then
+removes all temporary material. If `adb` is installed and reports an authorized
+device, it temporarily runs `adb reverse` for that ephemeral port and removes
+the reverse rule during cleanup. Device identifiers, pairing codes, bearer
+tokens, certificate paths, and command output are not written to the
+repository. The Android application still requires a physical-device UI and
+keystore pass; this smoke check only proves daemon transport/auth and forwarding
+setup.
+
 ## Regression gates
 
 Every security step must demonstrate that:
