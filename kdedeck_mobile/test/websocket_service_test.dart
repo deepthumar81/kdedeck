@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +15,7 @@ class MemoryCredentials implements CredentialStore {
   Completer<String?>? blockedRead;
   Completer<void>? blockedWrite;
   Completer<void>? blockedDelete;
+  Object? deleteFailure;
 
   @override
   Future<String?> read(String key) async {
@@ -30,6 +32,7 @@ class MemoryCredentials implements CredentialStore {
 
   @override
   Future<void> delete(String key) async {
+    if (deleteFailure != null) throw deleteFailure!;
     if (blockedDelete != null) await blockedDelete!.future;
     values.remove(key);
   }
@@ -37,6 +40,7 @@ class MemoryCredentials implements CredentialStore {
 
 class MemoryCertificates implements CertificateTrustStore {
   final values = <String, String>{};
+  Object? deleteFailure;
 
   @override
   Future<String?> read(String key) async => values[key];
@@ -46,7 +50,53 @@ class MemoryCertificates implements CertificateTrustStore {
       values[key] = certificatePem;
 
   @override
-  Future<void> delete(String key) async => values.remove(key);
+  Future<void> delete(String key) async {
+    if (deleteFailure != null) throw deleteFailure!;
+    values.remove(key);
+  }
+}
+
+Future<String> _certificateFixture({String san = 'DNS:localhost'}) async {
+  final directory =
+      await Directory.systemTemp.createTemp('kdedeck-client-unit-tls-');
+  final certificate = '${directory.path}/fixture.crt';
+  final key = '${directory.path}/fixture.key';
+  try {
+    final result = await Process.run('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-days',
+      '1',
+      '-subj',
+      '/CN=localhost',
+      '-addext',
+      'subjectAltName=$san',
+      '-keyout',
+      key,
+      '-out',
+      certificate,
+    ]);
+    if (result.exitCode != 0) {
+      throw StateError('OpenSSL certificate fixture generation failed');
+    }
+    return await File(certificate).readAsString();
+  } finally {
+    await directory.delete(recursive: true);
+  }
+}
+
+String _fingerprint(String certificatePem) {
+  final match = RegExp(
+    r'-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----',
+    dotAll: true,
+  ).firstMatch(certificatePem)!;
+  return sha256
+      .convert(base64Decode(match.group(1)!.replaceAll(RegExp(r'\s+'), '')))
+      .toString()
+      .toUpperCase();
 }
 
 class FakeSink implements WebSocketSink {
@@ -182,10 +232,10 @@ void main() {
   });
 
   test('certificate trust requires a matching fingerprint', () async {
-    const certificate =
-        '-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----';
-    final fingerprint =
-        sha256.convert(base64Decode('QQ==')).toString().toUpperCase();
+    final certificate = await _certificateFixture();
+    final fingerprint = _fingerprint(certificate);
+    service.serverIp = 'localhost';
+    service.secureConnection = true;
 
     await service.trustServerCertificate(
       certificate,
@@ -203,26 +253,128 @@ void main() {
   });
 
   test('certificate rotation is explicit and drops the old bearer', () async {
-    const first =
-        '-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----';
-    const second =
-        '-----BEGIN CERTIFICATE-----\nQg==\n-----END CERTIFICATE-----';
+    final first = await _certificateFixture();
+    final second = await _certificateFixture();
+    service.serverIp = 'localhost';
+    service.secureConnection = true;
+    final key = 'wss://localhost:8484';
     await service.trustServerCertificate(first);
-    credentials.values['ws://127.0.0.1:8484'] = 'old-bearer';
+    credentials.values[key] = 'old-bearer';
 
     await expectLater(
       service.trustServerCertificate(second),
       throwsA(isA<CertificateRotationRequired>()),
     );
-    expect(certificates.values['ws://127.0.0.1:8484'], first);
+    expect(certificates.values[key], first);
     await service.trustServerCertificate(second, replace: true);
-    expect(certificates.values['ws://127.0.0.1:8484'], second);
+    expect(certificates.values[key], second);
     expect(credentials.values, isEmpty);
   });
 
+  test('failed rotation credential deletion preserves the old trust', () async {
+    final first = await _certificateFixture();
+    final second = await _certificateFixture();
+    service.serverIp = 'localhost';
+    service.secureConnection = true;
+    final key = 'wss://localhost:8484';
+    await service.trustServerCertificate(first);
+    credentials.values[key] = 'old-bearer';
+    credentials.deleteFailure = StateError('keystore unavailable');
+
+    await expectLater(
+      service.trustServerCertificate(second, replace: true),
+      throwsA(isA<StateError>()),
+    );
+    expect(certificates.values[key], first);
+    expect(credentials.values[key], 'old-bearer');
+    expect(service.certificateFingerprint, _fingerprint(first));
+    expect(service.authError, 'credential_unavailable');
+  });
+
+  test('certificate trust rejects plaintext endpoints and malformed PEM',
+      () async {
+    final certificate = await _certificateFixture();
+    service.serverIp = 'localhost';
+    service.secureConnection = true;
+    final invalidPem = <String>[
+      '',
+      '-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----',
+      '-----BEGIN CERTIFICATE-----\nnot-base64\n-----END CERTIFICATE-----',
+      '-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----',
+      '$certificate\ntrailing text',
+      '$certificate\n$certificate',
+    ];
+
+    for (final pem in invalidPem) {
+      await expectLater(
+        service.trustServerCertificate(pem),
+        throwsA(isA<FormatException>()),
+      );
+    }
+    expect(certificates.values, isEmpty);
+
+    for (final expectedFingerprint in [
+      'not-a-fingerprint',
+      '0' * 63,
+      'G' * 64,
+    ]) {
+      await expectLater(
+        service.trustServerCertificate(
+          certificate,
+          expectedFingerprint: expectedFingerprint,
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+    expect(certificates.values, isEmpty);
+
+    service.secureConnection = false;
+    await expectLater(
+      service.trustServerCertificate(certificate),
+      throwsA(isA<StateError>()),
+    );
+    expect(certificates.values, isEmpty);
+  });
+
+  test('removing a saved server clears both schemes and secret stores',
+      () async {
+    const wsKey = 'ws://localhost:8484';
+    const wssKey = 'wss://localhost:8484';
+    final certificate = await _certificateFixture();
+    service.savedServers = [
+      {'name': 'TLS PC', 'ip': 'localhost', 'port': 8484, 'secure': true},
+    ];
+    credentials.values
+      ..[wsKey] = 'ws-token'
+      ..[wssKey] = 'wss-token';
+    certificates.values
+      ..[wsKey] = certificate
+      ..[wssKey] = certificate;
+
+    await service.removeServer(0);
+
+    expect(service.savedServers, isEmpty);
+    expect(credentials.values, isEmpty);
+    expect(certificates.values, isEmpty);
+  });
+
+  test('failed saved-server cleanup is visible and retains the profile',
+      () async {
+    service.savedServers = [
+      {'name': 'TLS PC', 'ip': 'localhost', 'port': 8484, 'secure': true},
+    ];
+    certificates.deleteFailure = StateError('keystore unavailable');
+
+    await expectLater(
+      service.removeServer(0),
+      throwsA(isA<StateError>()),
+    );
+    expect(service.savedServers, hasLength(1));
+    expect(service.authError, 'credential_unavailable');
+  });
+
   test('stored certificate is used before authentication', () async {
-    const certificate =
-        '-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----';
+    final certificate = await _certificateFixture();
     certificates.values['wss://localhost:8484'] = certificate;
     String? usedCertificate;
     service.dispose();
@@ -245,6 +397,42 @@ void main() {
     sockets.last.receive({'type': 'auth_required'});
     await settle();
     expect(service.authRequired, isTrue);
+  });
+
+  test('trust and bearer credentials remain isolated by endpoint', () async {
+    final certificate = await _certificateFixture();
+    certificates.values['wss://localhost:9443'] = certificate;
+    credentials.values['wss://localhost:9443'] = 'wrong-endpoint-token';
+    service.dispose();
+    service = makeService(
+      trustedConnector: (uri, pem) =>
+          fail('certificate from another endpoint was used'),
+    )
+      ..serverIp = 'localhost'
+      ..serverPort = 8484
+      ..secureConnection = true;
+
+    service.connect();
+    await settle();
+    sockets.last.receive({'type': 'auth_required'});
+    await settle();
+    expect(credentials.reads, contains('wss://localhost:8484'));
+    expect(credentials.reads, isNot(contains('wss://localhost:9443')));
+    expect(sockets.last.outbound.sent, isEmpty);
+
+    service.dispose();
+    service = makeService()
+      ..serverIp = '127.0.0.1'
+      ..secureConnection = false;
+    certificates.values['wss://127.0.0.1:8484'] = certificate;
+    credentials.values['wss://127.0.0.1:8484'] = 'wrong-scheme-token';
+    service.connect();
+    await settle();
+    sockets.last.receive({'type': 'auth_required'});
+    await settle();
+    expect(credentials.reads, contains('ws://127.0.0.1:8484'));
+    expect(credentials.reads, isNot(contains('wss://127.0.0.1:8484')));
+    expect(sockets.last.outbound.sent, isEmpty);
   });
 
   test('auth_success alone does not expose deck or permit actions', () async {

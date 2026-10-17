@@ -124,6 +124,7 @@ class WebSocketService extends ChangeNotifier {
   int _queuedFrames = 0;
   _Endpoint? _activeEndpoint;
   final Set<String> _rejectedCredentials = {};
+  final Map<String, Future<void>> _certificateOperations = {};
 
   /// True only after authorization (or a trusted loopback init_state).
   bool isConnected = false;
@@ -274,16 +275,37 @@ class WebSocketService extends ChangeNotifier {
 
   Future<void> removeServer(int index) async {
     if (index < 0 || index >= savedServers.length) return;
-    final server = savedServers.removeAt(index);
+    final server = savedServers[index];
+    final failures = <Object>[];
     for (final scheme in ['ws', 'wss']) {
+      late final String key;
       try {
-        await _credentialStore.delete(_Endpoint(
+        key = _Endpoint(
                 server['ip'] as String, server['port'] as int, scheme == 'wss')
-            .key);
+            .key;
       } catch (_) {
-        // A malformed legacy profile has no usable credential key.
+        failures.add(StateError('invalid endpoint cleanup failed'));
+        continue;
+      }
+      try {
+        await _credentialStore.delete(key);
+      } catch (_) {
+        failures.add(StateError('credential cleanup failed'));
+      }
+      try {
+        await _certificateTrustStore.delete(key);
+      } catch (_) {
+        failures.add(StateError('certificate cleanup failed'));
       }
     }
+    if (failures.isNotEmpty) {
+      authError = 'credential_unavailable';
+      notifyListeners();
+      throw StateError('Could not remove saved server securely');
+    }
+    final currentIndex = savedServers.indexOf(server);
+    if (currentIndex < 0) return;
+    savedServers.removeAt(currentIndex);
     await _saveServersToPrefs();
     notifyListeners();
   }
@@ -358,34 +380,96 @@ class WebSocketService extends ChangeNotifier {
     String? expectedFingerprint,
     bool replace = false,
   }) async {
-    final fingerprint = _certificateFingerprint(certificatePem);
+    final endpoint = _Endpoint(serverIp, serverPort, secureConnection);
+    if (!endpoint.secure) {
+      throw StateError('Certificate trust requires a secure endpoint');
+    }
+    final normalizedCertificate = _validateCertificatePem(certificatePem);
+    final fingerprint = _certificateFingerprint(normalizedCertificate);
     if (expectedFingerprint != null &&
         _normalizeFingerprint(expectedFingerprint) != fingerprint) {
       throw const FormatException('Certificate fingerprint mismatch');
     }
-    final key = _serverKey;
-    final previous = await _certificateTrustStore.read(key);
-    if (previous != null) {
-      final previousFingerprint = _certificateFingerprint(previous);
-      if (previousFingerprint != fingerprint && !replace) {
-        throw CertificateRotationRequired(previousFingerprint);
+    final key = endpoint.key;
+    final previousOperation = _certificateOperations[key];
+    final operation = (previousOperation ?? Future<void>.value())
+        .catchError((_) {})
+        .then((_) => _trustServerCertificate(
+              key,
+              normalizedCertificate,
+              fingerprint,
+              replace,
+            ));
+    _certificateOperations[key] = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_certificateOperations[key], operation)) {
+        _certificateOperations.remove(key);
       }
     }
-    await _certificateTrustStore.write(key, certificatePem);
-    certificateFingerprint = fingerprint;
-    authError = null;
-    if (replace) {
+  }
+
+  Future<void> _trustServerCertificate(
+    String key,
+    String certificatePem,
+    String fingerprint,
+    bool replace,
+  ) async {
+    final previous = await _certificateTrustStore.read(key);
+    String? previousFingerprint;
+    var previousCertificateIsInvalid = false;
+    if (previous != null) {
       try {
+        previousFingerprint = _certificateFingerprint(previous);
+      } catch (_) {
+        previousCertificateIsInvalid = true;
+      }
+      if ((previousCertificateIsInvalid || previousFingerprint != fingerprint) &&
+          !replace) {
+        final current = previousCertificateIsInvalid
+            ? 'unavailable'
+            : previousFingerprint!;
+        throw CertificateRotationRequired(current);
+      }
+    }
+
+    final rotating = previous != null &&
+        (previousCertificateIsInvalid || previousFingerprint != fingerprint);
+    if (rotating && replace) {
+      try {
+        // Delete the bearer before committing the replacement certificate. If
+        // deletion fails, retaining the old trust and bearer is the only
+        // consistent state; the caller must not reconnect as if rotation
+        // succeeded.
         await _credentialStore.delete(key);
       } catch (_) {
         authError = 'credential_unavailable';
+        notifyListeners();
+        throw StateError('Could not rotate certificate securely');
       }
     }
+
+    try {
+      await _certificateTrustStore.write(key, certificatePem);
+    } catch (_) {
+      // A failed secure-store write leaves the old certificate in place. A
+      // successful bearer deletion still requires the user to pair again.
+      authError = 'certificate_unavailable';
+      notifyListeners();
+      throw StateError('Could not store certificate securely');
+    }
+    certificateFingerprint = fingerprint;
+    authError = null;
     notifyListeners();
   }
 
   Future<void> clearTrustedCertificate() async {
-    final key = _serverKey;
+    final endpoint = _Endpoint(serverIp, serverPort, secureConnection);
+    if (!endpoint.secure) {
+      throw StateError('Certificate trust requires a secure endpoint');
+    }
+    final key = endpoint.key;
     await _certificateTrustStore.delete(key);
     certificateFingerprint = null;
     notifyListeners();
@@ -603,14 +687,24 @@ class WebSocketService extends ChangeNotifier {
     return IOWebSocketChannel.connect(uri, customClient: client);
   }
 
-  static List<int> _certificateDerBytes(String certificatePem) {
+  static String _validateCertificatePem(String certificatePem) {
+    final normalized = certificatePem.trim();
     final match = RegExp(
-      r'-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----',
+      r'^-----BEGIN CERTIFICATE-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END CERTIFICATE-----$',
       dotAll: true,
-    ).firstMatch(certificatePem);
-    if (match == null) throw const FormatException('Invalid certificate PEM');
+    ).firstMatch(normalized);
+    if (match == null) {
+      throw const FormatException('Invalid certificate PEM');
+    }
     try {
-      return base64Decode(match.group(1)!.replaceAll(RegExp(r'\s+'), ''));
+      final der = base64Decode(match.group(1)!.replaceAll(RegExp(r'\s+'), ''));
+      if (der.isEmpty) throw const FormatException('Invalid certificate PEM');
+
+      // SecurityContext performs the actual X.509/DER parse. It does not turn
+      // off hostname, validity-period, or chain checks during a handshake.
+      SecurityContext(withTrustedRoots: false)
+          .setTrustedCertificatesBytes(utf8.encode(normalized));
+      return normalized;
     } catch (_) {
       throw const FormatException('Invalid certificate PEM');
     }
@@ -621,11 +715,33 @@ class WebSocketService extends ChangeNotifier {
       .toString()
       .toUpperCase();
 
-  static String _normalizeFingerprint(String value) => value
+  static List<int> _certificateDerBytes(String certificatePem) {
+    final normalized = certificatePem.trim();
+    final match = RegExp(
+      r'^-----BEGIN CERTIFICATE-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END CERTIFICATE-----$',
+      dotAll: true,
+    ).firstMatch(normalized);
+    if (match == null) throw const FormatException('Invalid certificate PEM');
+    try {
+      final der = base64Decode(match.group(1)!.replaceAll(RegExp(r'\s+'), ''));
+      if (der.isEmpty) throw const FormatException('Invalid certificate PEM');
+      return der;
+    } catch (_) {
+      throw const FormatException('Invalid certificate PEM');
+    }
+  }
+
+  static String _normalizeFingerprint(String value) {
+    final normalized = value
       .replaceFirst(RegExp(r'^SHA256:', caseSensitive: false), '')
       .replaceAll(':', '')
       .replaceAll(RegExp(r'\s+'), '')
       .toUpperCase();
+    if (!RegExp(r'^[0-9A-F]{64}$').hasMatch(normalized)) {
+      throw const FormatException('Invalid certificate fingerprint');
+    }
+    return normalized;
+  }
 
   void _handleDisconnect(int generation, WebSocketChannel? channel) {
     if (_disposed || generation != _generation) return;

@@ -2644,3 +2644,37 @@ Platform TLS performs hostname and expiry validation, but physical Android trust
 expiry/hostname fixture coverage, and LAN verification remain pending. The
 connection screen accepts a certificate pasted from a separately trusted local
 channel; it never accepts a certificate silently from the failed network path.
+
+## Step 68 — Harden Flutter certificate validation and rotation boundaries
+
+### Goal
+
+Complete the Linux-testable certificate lifecycle boundary without claiming
+physical Android, desktop-platform, or LAN QA.
+
+### Changes
+
+- Require an exact, single PEM certificate whose base64 decodes to a valid
+  X.509 certificate before it can be fingerprinted or stored. Fingerprints now
+  require a normalized SHA-256 value with the expected length and characters.
+- Remove both scheme-scoped bearer credentials and certificate trust entries
+  when a saved server profile is deleted; failed cleanup remains visible and
+  does not report the profile as removed.
+- Make certificate replacement delete the old bearer before committing the new
+  certificate. A failed credential deletion preserves the old trust and bearer,
+  reports a bounded failure, and never silently reconnects with the old state.
+- Add OpenSSL-generated Linux WSS fixtures for expired certificates and retain
+  real hostname-mismatch coverage. Add service and widget coverage for parsing,
+  endpoint isolation, cleanup, rotation failure, and the verified-trust UI.
+
+### Verification
+
+- Focused Flutter service, transport, UI, and analyzer checks: pending in this
+  environment until the pinned Flutter runtime is available.
+- Full `make test`: pending for the same runtime availability limitation.
+
+### Scope boundary
+
+The automated Linux tests exercise the trust-before-auth, hostname, expiry,
+endpoint cleanup, and rotation boundaries. Physical Android/device-keystore,
+Windows, macOS, and physical LAN verification remain pending.

@@ -64,8 +64,9 @@ checks that the pasted certificate has that fingerprint, stores it in endpoint-
 scoped secure storage, and still uses the platform's normal hostname and
 validity-period checks. It sends no pairing credential during the failed
 handshake. A different certificate is rejected until **Replace an existing
-certificate** is explicitly selected; replacing also discards the old bearer
-token and requires pairing again.
+certificate** is explicitly selected; replacing first removes the old bearer
+token and requires pairing again. If secure credential deletion fails, the old
+certificate remains trusted and the rotation is reported as failed.
 
 Start the standalone daemon with `--pair` in its local interactive terminal, then
 enter that one-time code in the app's **Pair with code** field. Successful pairing
@@ -98,17 +99,22 @@ Automated tests generate disposable certificate/key fixtures outside the repo:
 - Missing, malformed, partial, and mismatched credentials refuse startup.
 - Loopback HTTP remains usable with TLS unset.
 - LAN startup requires TLS, including injected non-loopback test binds.
+- Flutter Linux tests cover exact PEM/X.509 parsing, fingerprint matching,
+  endpoint-scoped trust cleanup, rotation failure handling, and WSS rejection
+  of expired and hostname-mismatched certificates before authentication.
 
-Run `dart test test/dart_server_tls_test.dart` in `deckboard_daemon/backend`.
-Tests require OpenSSL on the test host; production uses Dart's TLS implementation.
+Run `dart test test/dart_server_tls_test.dart` in `deckboard_daemon/backend` and
+`flutter test test/client_transport_test.dart` in `kdedeck_mobile`. These tests
+require OpenSSL on the Linux test host; production uses Dart's TLS
+implementation.
 
 ## Required follow-ups
 
 - User-friendly certificate provisioning and verified server-identity workflow.
 - Verified trust/fingerprint provisioning and device keystore upgrade testing.
 - Physical Android/Linux LAN pairing and icon/editor end-to-end tests.
-- Expiry/hostname rejection fixtures and physical LAN verification remain open;
-  the platform TLS stack performs those checks in the client and the automated
-  suite covers the trust-before-auth and rotation boundaries.
+- Physical Android/device-keystore testing and physical LAN verification remain
+  open; the Linux suite exercises the client trust boundary but cannot replace
+  device-platform QA.
 - Certificate provisioning/fingerprint workflow for standalone and embedded
   servers, plus physical LAN verification.

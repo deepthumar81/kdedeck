@@ -85,11 +85,13 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
         return 'Too many attempts. Please wait before trying again.';
       case 'credential_unavailable':
         return 'Could not save the credential securely. Please try again.';
-       case 'unsupported_protocol':
-       case 'unsupported_protocol_version':
-         return 'This PC uses an unsupported pairing protocol.';
-       case 'connection_failed':
-         return 'Connection failed. Check the address, PC server and certificate trust.';
+      case 'certificate_unavailable':
+        return 'Could not update certificate trust securely. Please try again.';
+      case 'unsupported_protocol':
+      case 'unsupported_protocol_version':
+        return 'This PC uses an unsupported pairing protocol.';
+      case 'connection_failed':
+        return 'Connection failed. Check the address, PC server and certificate trust.';
       default:
         return 'Unable to pair. Check the PC and try again.';
     }
@@ -99,6 +101,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
     _certificateController.clear();
     _fingerprintController.clear();
     var replace = false;
+    var rotationRequired = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -111,6 +114,13 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                 const Text(
                   'Compare the SHA-256 fingerprint with the value shown on the PC through a separate trusted channel. Never trust a certificate from the network connection you are trying to secure.',
                 ),
+                if (rotationRequired)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: Text(
+                      'The server certificate changed. Confirm the new fingerprint, then explicitly replace the saved certificate. Replacement requires pairing again.',
+                    ),
+                  ),
                 TextField(
                   controller: _fingerprintController,
                   autocorrect: false,
@@ -152,7 +162,10 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
                   ws.connect();
                 } on CertificateRotationRequired {
-                  setDialogState(() => replace = true);
+                  setDialogState(() {
+                    replace = true;
+                    rotationRequired = true;
+                  });
                 } on FormatException {
                   if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -811,7 +824,20 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                             ),
                           IconButton(
                             icon: Icon(Icons.delete_outline_rounded, size: 18, color: textPrimary.withOpacity(0.4)),
-                            onPressed: () => ws.removeServer(idx),
+                            onPressed: () async {
+                              try {
+                                await ws.removeServer(idx);
+                              } catch (_) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Saved PC secrets could not be removed securely.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
                           ),
                         ],
                       ),

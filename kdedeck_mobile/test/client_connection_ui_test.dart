@@ -112,6 +112,29 @@ void main() {
     expect(systemIconUri(service, 'unavailable.svg'), isNull);
   });
 
+  testWidgets('verified certificate trust is offered only for secure failure',
+      (tester) async {
+    service.authError = 'connection_failed';
+    service.secureConnection = true;
+    await render(tester);
+    expect(find.text('Trust a verified certificate'), findsOneWidget);
+
+    await tester.tap(find.text('Trust a verified certificate'));
+    await animateDialog(tester);
+    expect(
+      find.textContaining('separate trusted channel'),
+      findsOneWidget,
+    );
+    expect(find.text('Replace an existing certificate'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await animateDialog(tester);
+
+    service.secureConnection = false;
+    service.notifyListeners();
+    await tester.pump();
+    expect(find.text('Trust a verified certificate'), findsNothing);
+  });
+
   test('system icon endpoint follows the selected WebSocket transport', () {
     service.serverIp = 'pc.example';
     service.secureConnection = true;

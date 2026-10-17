@@ -83,9 +83,10 @@ security or UI/platform parity.
   unsupported versions without rewriting legacy files (Step 42).
 - [x] Icon authorization, file/content limits and safe SVG behavior; valid Snap,
   user-local Flatpak and package icon roots with no feature regression (Step 55).
-- [ ] TLS certificate expiry/hostname rejection fixtures and physical LAN
-  verification (Step 61 adds provisioning; Step 67 adds endpoint-scoped,
-  fingerprint-checked trust and explicit rotation in the Flutter client).
+- [ ] Verify Flutter Linux TLS expiry/hostname rejection fixtures, strict PEM
+  validation, endpoint cleanup, and safe certificate-rotation failure handling
+  (Step 68 implementation is present; runtime verification is blocked in this
+  environment); physical LAN verification remains pending.
 - [x] Reject explicitly unsupported protocol versions before standalone
   authentication consumes credentials (Step 43); omitted versions remain
   backward-compatible.
@@ -101,8 +102,9 @@ security or UI/platform parity.
 ## Clients, UX, platforms, releases
 
 - [ ] Verify Flutter pairing/auth/WSS, secure storage, expiry/reconnect/re-pair
-  flows on physical devices and record device QA. Automated trust import and
-  explicit replacement are covered in the client service/UI.
+  flows on physical devices and record device QA. Automated trust import,
+  explicit replacement, and Linux expiry/hostname coverage are complete in the
+  client service/UI.
 - [x] Implement the Flutter client pairing/token exchange, endpoint-scoped secure
   storage, WSS-only LAN policy, reconnect fencing, revision-aware saves, and phone
   pairing/recovery UI with automated service/widget/transport tests (Step 53).
