@@ -143,9 +143,9 @@ platform SDKs and desktop integration.
 
 ### Prerequisites
 
-- Dart SDK `3.13.1`
-- Flutter `3.47.1` with the SDK revision recorded in
-  [`kdedeck_mobile/.metadata`](kdedeck_mobile/.metadata)
+- Dart SDK `3.13.1` (see [`.dart-version`](.dart-version))
+- Flutter `3.47.1` (see [`.flutter-version`](.flutter-version)); the SDK revision
+  is also recorded in [`kdedeck_mobile/.metadata`](kdedeck_mobile/.metadata)
 - Go `1.25.0` or newer within the module's supported toolchain line
 - Node.js `22.23.1` (see [`.nvmrc`](.nvmrc))
 - Docker Engine `29.9.0` or a compatible recent Docker release for the
@@ -230,8 +230,9 @@ not a replacement for the host-integrated Flutter desktop or Go tray builds.
   and the checked-in sample configuration contain no paths from the developer's
   workstation. Runtime host paths are supplied by the operating system or
   environment variables instead.
-- [x] **Pinned runtimes:** `.nvmrc`, `go.mod`, the Flutter project metadata,
-  and the pinned Dart Docker image record the supported toolchain versions.
+- [x] **Pinned runtimes:** `.nvmrc`, `.dart-version`, `.flutter-version`,
+  `go.mod`, the Flutter project metadata, and the pinned Dart Docker image
+  record the supported toolchain versions.
 - [x] **Reproducible checks:** `make test` is the single repository test entry
   point after dependencies have been installed.
 

@@ -2597,7 +2597,7 @@ The GitHub artifact job failed during `flutter build apk --release` because the
 committed Gradle wrapper configuration referenced:
 
 ```text
-file:///home/kaily/.gradle/wrapper/dists/gradle-9.3.1-all/...
+file://<developer-home>/.gradle/wrapper/dists/gradle-9.3.1-all/...
 ```
 
 The runner could not open that machine-specific local file and retried the same

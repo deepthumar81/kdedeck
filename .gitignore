@@ -25,6 +25,7 @@ __pycache__/
 **/build/
 **/coverage/
 **/doc/api/
+deckboard_daemon/tray/deckboard_tray
 **/ios/Flutter/.last_build_id
 *.symbols
 *.map.json
