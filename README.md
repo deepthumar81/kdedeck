@@ -21,9 +21,10 @@ platform adapters, not supported system-control backends yet.
 
 KDE Deck is an active Linux-first development project. The daemon, browser
 configurator, authentication boundary, TLS listener, Android client, and
-automated checks are under development and testing. Windows and macOS adapters,
-signed release packaging, physical-device QA, and certificate trust UX remain
-on the roadmap. See [`ROADMAP.md`](ROADMAP.md) and
+automated checks are under development and testing. Verified certificate trust
+import is available in the Flutter client; Windows and macOS adapters, signed
+release packaging, and physical-device QA remain on the roadmap. See
+[`ROADMAP.md`](ROADMAP.md) and
 [`docs/PENDING_WORK.md`](docs/PENDING_WORK.md) before relying on a feature.
 
 ## For contributors
