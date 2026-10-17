@@ -200,7 +200,7 @@ flutter build apk --release
 Build the standalone daemon image from the repository root:
 
 ```bash
-docker build --tag kdedeck-daemon .
+docker build --network host --tag kdedeck-daemon .
 ```
 
 Run it on a Linux host using host networking. The checked-in default config is
@@ -240,8 +240,8 @@ not a replacement for the host-integrated Flutter desktop or Go tray builds.
 ### Deployment checklist
 
 1. Run `make test`.
-2. Build and inspect the daemon with `docker build --tag kdedeck-daemon .` or
-   `dart compile exe`.
+2. Build and inspect the daemon with
+   `docker build --network host --tag kdedeck-daemon .` or `dart compile exe`.
 3. Keep TLS private keys, pairing overrides, and local application registries
    outside Git; use `.env.example` as the variable reference.
 4. For LAN deployments, verify certificate hostname/trust and pair the phone
