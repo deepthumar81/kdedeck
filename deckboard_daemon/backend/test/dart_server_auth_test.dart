@@ -6,6 +6,7 @@ import 'package:backend/auth_rate_limiter.dart';
 import 'package:backend/auth_session_manager.dart';
 import 'package:backend/command_executor.dart';
 import 'package:backend/dart_server_service.dart';
+import 'package:backend/enrollment_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -61,6 +62,34 @@ void main() {
       await client.close();
     },
   );
+
+  test('enrollment challenge issues a stored bearer token exactly once', () {
+    final clock = _FakeClock(DateTime.utc(2026, 1, 1));
+    final enrollmentStore = EnrollmentChallengeStore(clock: clock.now);
+    final manager = AuthSessionManager(
+      issueCodeOnCreate: false,
+      clock: clock.now,
+    );
+    final payload = enrollmentStore.issue(
+      host: 'pc.example',
+      port: 8484,
+      certificateSha256: 'a' * 64,
+    );
+    final result = manager.authenticateEnrollment(
+      role: AuthRole.configAdmin,
+      consumeChallenge: () => enrollmentStore.consume(payload),
+    );
+    expect(result.succeeded, isTrue);
+    expect(manager.validateToken(result.session!.token), isNotNull);
+    expect(
+      manager
+          .authenticateEnrollment(
+            consumeChallenge: () => enrollmentStore.consume(payload),
+          )
+          .succeeded,
+      isFalse,
+    );
+  });
 
   test(
     'accepts a same-origin WebSocket Origin before authentication',

@@ -56,6 +56,17 @@ Loopback remains HTTP/WS when neither TLS variable is set, or HTTPS/WSS when
 both valid variables are supplied. Invalid explicit TLS never downgrades even
 on loopback. Certificate paths are not board settings and are not sent to clients.
 
+### Linux LAN discovery
+
+When the standalone daemon is running on Linux with a non-loopback bind and a
+valid TLS listener, it advertises the DNS-SD service type `_kde-deck._tcp` over
+the local mDNS multicast address. The announcement contains only the TLS
+endpoint's port, the `/ws` path, protocol version, and a generic service/host
+name. It never contains TLS key material, bearer tokens, pairing codes, or
+device identifiers. Loopback-only mode and any startup that fails its TLS gate
+do not advertise. Stopping the daemon sends DNS-SD goodbye records before the
+multicast socket closes.
+
 See [TLS setup](security/tls-setup.md). The Flutter client now uses WSS for LAN
 endpoints with platform certificate validation and no insecure fallback. Plain
 WS is allowed only for numeric loopback addresses. Provisioning and verified
@@ -86,6 +97,32 @@ The initial challenge is intentionally minimal:
 { "type": "auth_required" }
 ```
 
+### QR/copy enrollment
+
+The tray dashboard's secure enrollment route emits the same strict JSON object
+accepted by the Flutter QR or copy/paste parser:
+
+```json
+{
+  "version": 1,
+  "scheme": "https",
+  "host": "pc.example",
+  "port": 8484,
+  "certificate_sha256": "<64 lowercase hex characters>",
+  "challenge": "<single-use random value>",
+  "issued_at": "2026-01-01T00:00:00.000Z",
+  "expires_at": "2026-01-01T00:02:00.000Z"
+}
+```
+
+The daemon accepts this object only over the exact HTTPS host/port that it
+issued, with the same certificate fingerprint and before expiry. It consumes
+the challenge atomically once and returns a new bearer token in `auth_success`;
+the challenge is never stored as a bearer credential. A malformed, expired,
+replayed, or wrong-endpoint object receives bounded authentication failure.
+The short pairing code remains available for camera-less phones through the
+local tray dashboard or interactive `--pair` terminal flow.
+
 Pair with the local one-time code:
 
 Start the standalone daemon in an interactive terminal with
@@ -108,8 +145,9 @@ pairing codes except for the explicit pair commands. Administrative commands
 require both terminal streams and fail closed when the server is stopped.
 
 The terminal is a sensitive local display: do not use terminal recording or share
-screenshots of it. Background/tray mode has no pairing display yet; use this
-foreground workflow and do not start a second daemon on an occupied port.
+screenshots of it. A tray dashboard displays the secure enrollment QR/payload on
+request when the daemon is using HTTPS; its loopback-only tray mode displays the
+short-code fallback. Do not start a second daemon on an occupied port.
 
 ```json
 {

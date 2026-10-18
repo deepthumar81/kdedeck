@@ -240,6 +240,7 @@ void main() {
     final issued = DateTime.now().toUtc();
     final invite = EnrollmentInvite(
       version: 1,
+      scheme: 'https',
       host: '127.0.0.1',
       port: 8484,
       certificateSha256: 'a' * 64,

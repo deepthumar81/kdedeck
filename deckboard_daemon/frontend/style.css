@@ -369,6 +369,9 @@ button {
 }
 .pairing-panel-heading { display: flex; align-items: center; gap: 0.5rem; color: var(--accent-color); margin-bottom: 0.5rem; }
 .pairing-panel-copy, .pairing-code-hint, .pairing-expires, .manual-pairing-hint { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.4; margin: 0.5rem 0; }
+.pairing-qr { width: min(100%, 280px); margin: 0.9rem auto; padding: 0.75rem; border-radius: 0.5rem; background: #fff; }
+.pairing-qr[hidden] { display: none; }
+.pairing-qr svg { display: block; width: 100%; height: auto; shape-rendering: crispEdges; }
 .pairing-payload { display: block; overflow-wrap: anywhere; background: var(--bg-color); padding: 0.6rem; border-radius: 0.4rem; color: var(--text-primary); font-size: 0.75rem; margin: 0.75rem 0; }
 .pairing-code-display { display: block; letter-spacing: 0.22em; font-size: 1.45rem; font-weight: 700; color: var(--text-primary); margin: 0.5rem 0; }
 .manual-pairing-hint code { color: var(--text-primary); }

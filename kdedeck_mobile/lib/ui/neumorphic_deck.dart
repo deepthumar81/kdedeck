@@ -45,6 +45,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _activePageIndex = 0;
   final _pairingCodeController = TextEditingController();
+  final _enrollmentPayloadController = TextEditingController();
   final _embeddedTokenController = TextEditingController();
   final _certificateController = TextEditingController();
   final _fingerprintController = TextEditingController();
@@ -71,6 +72,7 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
   void dispose() {
     _sliderDebounceTimer?.cancel();
     _pairingCodeController.dispose();
+    _enrollmentPayloadController.dispose();
     _embeddedTokenController.dispose();
     _certificateController.dispose();
     _fingerprintController.dispose();
@@ -187,6 +189,31 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _pasteEnrollment(WebSocketService ws) async {
+    final raw = _enrollmentPayloadController.text.trim().isNotEmpty
+        ? _enrollmentPayloadController.text.trim()
+        : (await Clipboard.getData(Clipboard.kTextPlain))?.text?.trim() ?? '';
+    if (raw.isEmpty) {
+      if (mounted) {
+        setState(() => _onboardingMessage =
+            'Paste the JSON enrollment payload copied from the secure dashboard.');
+      }
+      return;
+    }
+    try {
+      final invite = EnrollmentInvite.parse(raw);
+      await ws.enroll(invite);
+      _enrollmentPayloadController.clear();
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _onboardingMessage = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _onboardingMessage =
+            'Could not enroll this PC securely. Check the endpoint and certificate.');
+      }
+    }
   }
 
   Future<void> _trustCertificate(WebSocketService ws) async {
@@ -1019,6 +1046,27 @@ class _NeumorphicDeckScreenState extends State<NeumorphicDeckScreen> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  key: const Key('enrollmentPayload'),
+                  controller: _enrollmentPayloadController,
+                  minLines: 1,
+                  maxLines: 4,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  style: TextStyle(color: textPrimary, fontSize: 12),
+                  decoration: const InputDecoration(
+                    labelText: 'Paste enrollment JSON (optional)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                  key: const Key('pasteEnrollment'),
+                  onPressed: () => _pasteEnrollment(ws),
+                  icon: const Icon(Icons.content_paste),
+                  label: const Text('Use pasted enrollment'),
                 ),
                 if (_onboardingMessage != null) ...[
                   const SizedBox(height: 8),

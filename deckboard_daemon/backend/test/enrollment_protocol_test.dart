@@ -24,6 +24,7 @@ void main() {
       clock: clock.now,
     );
     expect(parsed.version, EnrollmentPayload.currentVersion);
+    expect(parsed.scheme, 'https');
     expect(parsed.host, '192.168.1.20');
     expect(store.consume(parsed), isTrue);
   });
@@ -54,6 +55,7 @@ void main() {
     );
     final valid = {
       'version': EnrollmentPayload.currentVersion,
+      'scheme': 'https',
       'host': 'host.example',
       'port': 8484,
       'certificate_sha256': fingerprint,
@@ -67,6 +69,13 @@ void main() {
     };
     expect(
       () => EnrollmentPayload.parse(valid, clock: clock.now),
+      throwsA(isA<FormatException>()),
+    );
+    final wrongScheme = Map<String, dynamic>.of(valid)
+      ..remove('unexpected')
+      ..['scheme'] = 'http';
+    expect(
+      () => EnrollmentPayload.parse(wrongScheme, clock: clock.now),
       throwsA(isA<FormatException>()),
     );
   });

@@ -11,6 +11,7 @@ import 'auth_session_manager.dart';
 import 'command_executor.dart';
 import 'config_validator.dart';
 import 'enrollment_protocol.dart';
+import 'mdns_service_advertiser.dart';
 import 'protocol_metadata.dart';
 import 'server_tls.dart';
 import 'session_store.dart';
@@ -116,6 +117,8 @@ class DartServerService {
       _applicationRegistry = ApprovedApplicationRegistry.fromEnvironment(),
       _commandExecutor = ProcessCommandExecutor.bounded(),
       _launchCommandExecutor = const ProcessCommandExecutor(),
+      _mdnsAdvertiser = MdnsServiceAdvertiser(),
+      _clock = (() => DateTime.now().toUtc()),
       _sensitiveActionPolicy = const SensitiveActionPolicy(),
       _maxConnections = defaultMaxConnections,
       _maxFrameBytes = defaultMaxFrameBytes,
@@ -171,6 +174,7 @@ class DartServerService {
     configWriter,
     EnrollmentChallengeStore? enrollmentChallengeStore,
     String? enrollmentCertificateSha256,
+    MdnsAdvertiser? mdnsAdvertiser,
   }) : port = port,
        _bindAddress = bindAddress ?? InternetAddress.loopbackIPv4,
        _bindAddressOverride = bindAddress,
@@ -197,6 +201,8 @@ class DartServerService {
        _launchCommandExecutor =
            launchCommandExecutor ??
            (commandExecutor ?? const ProcessCommandExecutor()),
+       _mdnsAdvertiser = mdnsAdvertiser ?? MdnsServiceAdvertiser(),
+       _clock = clock ?? (() => DateTime.now().toUtc()),
        _sensitiveActionPolicy = sensitiveActionPolicy,
        _maxConnections = _validateMaxConnections(maxConnections),
        _maxFrameBytes = _validatePositiveLimit(maxFrameBytes, 'maxFrameBytes'),
@@ -247,6 +253,7 @@ class DartServerService {
   HttpServer? _server;
   final List<WebSocket> _clients = [];
   final Map<WebSocket, AuthSession> _authenticatedClients = {};
+  final Map<WebSocket, _OriginEndpoint?> _clientEndpoints = {};
   InternetAddress _bindAddress;
   final InternetAddress? _bindAddressOverride;
   final String _configPath;
@@ -263,6 +270,8 @@ class DartServerService {
   final ApprovedApplicationRegistry _applicationRegistry;
   final CommandExecutor _commandExecutor;
   final CommandExecutor _launchCommandExecutor;
+  final MdnsAdvertiser _mdnsAdvertiser;
+  final DateTime Function() _clock;
   SensitiveActionPolicy _sensitiveActionPolicy;
   final int _maxConnections;
   final int _maxFrameBytes;
@@ -282,6 +291,7 @@ class DartServerService {
   bool isRunning = false;
   bool isSecure = false;
   bool _localPairingRouteEnabled = false;
+  bool _mdnsStarted = false;
   int port;
   int _pendingConnections = 0;
   int _lifecycleGeneration = 0;
@@ -612,6 +622,7 @@ class DartServerService {
           // exception text or raw request data through the server log.
         },
       );
+      await _startMdnsAdvertisement();
       _authSessionManager.addRevocationListener(_closeRevokedClients);
       _startMetricsLoop();
     } catch (_) {
@@ -651,12 +662,20 @@ class DartServerService {
       _pendingConnections++;
       try {
         final clientIdentity = _clientIdentityResolver(request);
+        final authority = request.headers.value(HttpHeaders.hostHeader);
+        final endpoint = authority == null
+            ? null
+            : _parseHostEndpoint(authority, isSecure ? 'https' : 'http');
+        if (endpoint == null) {
+          await _rejectInvalidOrigin(request);
+          return;
+        }
         final socket = await WebSocketTransformer.upgrade(request);
         if (!_isCurrentGeneration(generation) || !isRunning) {
           await socket.close(WebSocketStatus.goingAway, 'Server stopping');
           return;
         }
-        _handleClientConnect(socket, clientIdentity, generation);
+        _handleClientConnect(socket, clientIdentity, generation, endpoint);
       } catch (_) {
         print("WS Upgrade Error");
       } finally {
@@ -1015,6 +1034,31 @@ class DartServerService {
 
   Future<void> stopServer() => _enqueueLifecycle(_disposeServer);
 
+  bool get _shouldAdvertiseMdns =>
+      Platform.isLinux && isRunning && isSecure && !_bindAddress.isLoopback;
+
+  Future<void> _startMdnsAdvertisement() async {
+    if (!_shouldAdvertiseMdns || _mdnsStarted) return;
+    try {
+      await _mdnsAdvertiser.start(port: port);
+      _mdnsStarted = true;
+    } catch (_) {
+      // Discovery is optional. A host mDNS daemon or a restricted multicast
+      // network must not make an otherwise usable TLS listener fail startup.
+      print('⚠️ [DartServerService] LAN discovery unavailable');
+    }
+  }
+
+  Future<void> _stopMdnsAdvertisement() async {
+    if (!_mdnsStarted) return;
+    _mdnsStarted = false;
+    try {
+      await _mdnsAdvertiser.stop();
+    } catch (_) {
+      // Shutdown must still release the HTTP listener when mDNS is unavailable.
+    }
+  }
+
   Future<void> _disposeServer() async {
     // Invalidate every callback that was started by the previous listener
     // before awaiting any socket or server shutdown operation. Dart futures
@@ -1025,6 +1069,7 @@ class DartServerService {
     // kept error-safe by [_saveConfigLocal], so this await cannot poison the
     // lifecycle queue or deadlock on a failed write.
     await _saveOperation;
+    await _stopMdnsAdvertisement();
     _authSessionManager.removeRevocationListener(_closeRevokedClients);
     _metricsTimer?.cancel();
     try {
@@ -1038,6 +1083,7 @@ class DartServerService {
     } finally {
       _clients.clear();
       _authenticatedClients.clear();
+      _clientEndpoints.clear();
       _clientIdentities.clear();
       _rateLimitedClosing.clear();
       _oversizedFrameClosing.clear();
@@ -1081,6 +1127,7 @@ class DartServerService {
     WebSocket socket,
     String clientIdentity,
     int generation,
+    _OriginEndpoint endpoint,
   ) {
     if (!_isCurrentGeneration(generation) || !isRunning) {
       unawaited(socket.close(WebSocketStatus.goingAway, 'Server stopping'));
@@ -1088,6 +1135,7 @@ class DartServerService {
     }
     _clients.add(socket);
     _clientIdentities[socket] = clientIdentity;
+    _clientEndpoints[socket] = endpoint;
     print("📱 Client connected! Total clients: ${_clients.length}");
 
     // Do not disclose config, metrics, or pairing material before auth.
@@ -1296,10 +1344,39 @@ class DartServerService {
 
     final pairingCode = data['pairing_code'];
     final token = data['token'];
+    final enrollment = data['enrollment'];
     AuthSession? session;
     AuthAuthenticationFailure? authenticationFailure;
+    String? authenticationErrorCode;
 
-    if (pairingCode is String && pairingCode.isNotEmpty && token == null) {
+    if (enrollment != null) {
+      if (pairingCode != null || token != null) {
+        authenticationErrorCode = 'invalid_credentials';
+      }
+      final endpoint = _clientEndpoints[socket];
+      EnrollmentPayload? candidate;
+      if (authenticationErrorCode == null) {
+        try {
+          candidate = EnrollmentPayload.parse(enrollment, clock: _clock);
+        } on FormatException catch (error) {
+          if (error.message == 'Expired enrollment') {
+            authenticationErrorCode = 'expired';
+          }
+        }
+      }
+      if (candidate != null &&
+          _matchesEnrollmentEndpoint(candidate, endpoint)) {
+        final result = _authSessionManager.authenticateEnrollment(
+          role: _localPairingRole,
+          consumeChallenge: () => _enrollmentChallenges.consume(candidate!),
+        );
+        session = result.session;
+        authenticationFailure = result.failure;
+        if (session != null) _localPairingRole = AuthRole.configAdmin;
+      }
+    } else if (pairingCode is String &&
+        pairingCode.isNotEmpty &&
+        token == null) {
       // The role is assigned only by the local terminal operator when issuing
       // the code. A client-supplied role is deliberately ignored and cannot
       // elevate or downgrade the server-assigned role.
@@ -1322,7 +1399,7 @@ class DartServerService {
         socket,
         authenticationFailure == AuthAuthenticationFailure.capacityReached
             ? 'session_capacity'
-            : 'invalid_credentials',
+            : authenticationErrorCode ?? 'invalid_credentials',
       );
       return;
     }
@@ -1337,6 +1414,38 @@ class DartServerService {
       "role": session.role.name,
     });
     _sendInitState(socket);
+  }
+
+  bool _matchesEnrollmentEndpoint(
+    EnrollmentPayload payload,
+    _OriginEndpoint? endpoint,
+  ) {
+    final fingerprint = _enrollmentCertificateSha256;
+    if (endpoint == null ||
+        !isSecure ||
+        payload.scheme != 'https' ||
+        endpoint.scheme != payload.scheme ||
+        endpoint.port != payload.port ||
+        endpoint.host.toLowerCase() != payload.host.toLowerCase() ||
+        fingerprint == null) {
+      return false;
+    }
+    return _constantTimeEquals(payload.certificateSha256, fingerprint);
+  }
+
+  static bool _constantTimeEquals(String left, String right) {
+    final leftBytes = utf8.encode(left);
+    final rightBytes = utf8.encode(right);
+    var difference = leftBytes.length ^ rightBytes.length;
+    final length = leftBytes.length > rightBytes.length
+        ? leftBytes.length
+        : rightBytes.length;
+    for (var index = 0; index < length; index++) {
+      difference |=
+          (index < leftBytes.length ? leftBytes[index] : 0) ^
+          (index < rightBytes.length ? rightBytes[index] : 0);
+    }
+    return difference == 0;
   }
 
   AuthSession? _sessionFor(WebSocket socket) {
@@ -1394,6 +1503,7 @@ class DartServerService {
   void _removeClient(WebSocket socket) {
     _clients.remove(socket);
     _authenticatedClients.remove(socket);
+    _clientEndpoints.remove(socket);
     _clientIdentities.remove(socket);
     _rateLimitedClosing.remove(socket);
     _oversizedFrameClosing.remove(socket);

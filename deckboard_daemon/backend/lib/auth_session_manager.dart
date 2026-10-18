@@ -277,6 +277,57 @@ class AuthSessionManager {
     return AuthAuthenticationResult.success(session);
   }
 
+  /// Exchanges a validated external enrollment challenge for a bearer session.
+  ///
+  /// The callback is invoked only after persistence health and session
+  /// capacity have been checked. The enrollment store can therefore consume
+  /// its challenge exactly once without exposing a pairing code or making the
+  /// challenge itself a reusable bearer credential.
+  AuthAuthenticationResult authenticateEnrollment({
+    required bool Function() consumeChallenge,
+    AuthRole role = AuthRole.viewer,
+  }) {
+    final now = _now();
+    _removeExpiredSessions(now);
+    if (!_persistenceHealthy) {
+      return const AuthAuthenticationResult.failure(
+        AuthAuthenticationFailure.persistenceUnavailable,
+      );
+    }
+    if (_sessions.length >= _maxActiveSessions) {
+      return const AuthAuthenticationResult.failure(
+        AuthAuthenticationFailure.capacityReached,
+      );
+    }
+    if (!consumeChallenge()) {
+      return const AuthAuthenticationResult.failure(
+        AuthAuthenticationFailure.invalidCredentials,
+      );
+    }
+
+    final session = AuthSession(
+      token: _generateUniqueSessionToken(),
+      role: role,
+      issuedAt: now,
+      expiresAt: now.add(_sessionLifetime),
+    );
+    final fingerprint = sessionTokenFingerprint(session.token);
+    final updated = Map<String, StoredSession>.of(_sessions);
+    updated[fingerprint] = StoredSession(
+      fingerprint,
+      role.name,
+      session.issuedAt,
+      session.expiresAt,
+    );
+    if (!_commit(updated)) {
+      return const AuthAuthenticationResult.failure(
+        AuthAuthenticationFailure.persistenceUnavailable,
+      );
+    }
+    _liveSessions[fingerprint] = session;
+    return AuthAuthenticationResult.success(session);
+  }
+
   /// Alias for [authenticate] using pairing terminology.
   AuthSession? pair(String code, {AuthRole role = AuthRole.viewer}) =>
       authenticate(code, role: role);

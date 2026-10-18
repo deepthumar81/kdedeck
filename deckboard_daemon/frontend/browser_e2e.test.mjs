@@ -68,6 +68,7 @@ const document = {
         return elements.get(id);
     },
     createElement(tag) { return new FakeElement(tag); },
+    createElementNS(_namespace, tag) { return new FakeElement(tag); },
     createTextNode(text) { return new FakeElement(String(text)); },
     addEventListener() {},
 };
@@ -87,9 +88,21 @@ globalThis.window = {
     clearTimeout,
 };
 globalThis.WebSocket = FakeWebSocket;
-globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({ code: 'ALPHA-PAIR', expires_at: '2030-01-01T00:00:00.000Z' }),
+let enrollmentAvailable = true;
+globalThis.fetch = async (url) => ({
+    ok: !String(url).endsWith('/enrollment') || enrollmentAvailable,
+    json: async () => String(url).endsWith('/enrollment')
+        ? {
+            version: 1,
+            scheme: 'https',
+            host: 'pc.local',
+            port: 8484,
+            certificate_sha256: 'a'.repeat(64),
+            challenge: 'challenge_123',
+            issued_at: '2030-01-01T00:00:00.000Z',
+            expires_at: '2030-01-01T00:02:00.000Z',
+        }
+        : { code: 'ALPHA-PAIR', expires_at: '2030-01-01T00:00:00.000Z' },
 });
 
 await import(`./app.js?browser-e2e=${Date.now()}`);
@@ -145,6 +158,26 @@ test('tray pairing panel provides a camera-less code and local payload', async (
     requestButton.dispatch('click');
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(elements.get('pairing-code-display').textContent, 'ALPHA-PAIR');
-    assert.match(elements.get('pairing-payload').textContent, /kdedeck:\/\/pair\?origin=/);
+    const qr = elements.get('pairing-qr');
+    assert.equal(qr.hidden, false);
+    assert.equal(qr.children.length > 0, true);
+    assert.equal(qr.children[0].getAttribute('role'), 'img');
+    const payload = JSON.parse(elements.get('pairing-payload').textContent);
+    assert.deepEqual(payload, {
+        version: 1,
+        scheme: 'https',
+        host: 'pc.local',
+        port: 8484,
+        certificate_sha256: 'a'.repeat(64),
+        challenge: 'challenge_123',
+        issued_at: '2030-01-01T00:00:00.000Z',
+        expires_at: '2030-01-01T00:02:00.000Z',
+    });
     assert.match(elements.get('pairing-expires').textContent, /Expires/);
+
+    enrollmentAvailable = false;
+    requestButton.dispatch('click');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(qr.hidden, true);
+    assert.equal(qr.children.length, 0);
 });

@@ -98,6 +98,18 @@ repository. The Android application still requires a physical-device UI and
 keystore pass; this smoke check only proves daemon transport/auth and forwarding
 setup.
 
+### Repository test command and environment failures
+
+`make test` first checks that the pinned command-line tools (`dart`, `flutter`,
+`node`, `go`, and `timeout`) are available. It does not install dependencies;
+run the locked dependency setup from the README first. Each test subprocess is
+bounded by `TEST_TIMEOUT` (180 seconds by default), and a timeout exits nonzero
+with the original command visible rather than being treated as a pass or skip.
+For a slower but still bounded environment, override it explicitly, for example
+`TEST_TIMEOUT=300s make test`. An unavailable Android device is not a reason to
+skip the daemon/client tests; the TLS smoke check reports its optional ADB
+forwarding result separately.
+
 ## Regression gates
 
 Every security step must demonstrate that:

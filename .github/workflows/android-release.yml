@@ -84,13 +84,13 @@ jobs:
         working-directory: kdedeck_mobile
         run: flutter build apk --release
 
-      - name: Collect and validate alpha release APK
+      - name: Collect and validate production alpha release
         run: |
           set -eu
           mkdir -p artifacts
           cp kdedeck_mobile/build/app/outputs/flutter-apk/app-release.apk artifacts/app-release.apk
           KDEDECK_RELEASE_TAG="$GITHUB_REF_NAME" \
-            make alpha-readiness-check ARTIFACT_DIR=artifacts SIGNING_MODE=--require-release
+            make alpha-release-check ARTIFACT_DIR=artifacts
 
       - name: Publish GitHub Release
         env:

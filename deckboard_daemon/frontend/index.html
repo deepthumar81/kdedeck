@@ -99,7 +99,8 @@
                         <span class="material-symbols-outlined">qr_code_2</span>
                         <strong>QR pairing option</strong>
                     </div>
-                    <p class="pairing-panel-copy">Copy this pairing payload into a QR-capable device or pairing tool. It stays local to this dashboard.</p>
+                    <p class="pairing-panel-copy">Scan the exact JSON enrollment payload or copy/paste it into the phone. It binds the HTTPS endpoint, certificate identity, and one-time expiry.</p>
+                    <div id="pairing-qr" class="pairing-qr" hidden aria-label="Enrollment QR code"></div>
                     <code id="pairing-payload" class="pairing-payload"></code>
                     <button type="button" id="copy-pairing-btn" class="btn-secondary">Copy pairing payload</button>
                     <p id="pairing-code-hint" class="pairing-code-hint">Camera-less fallback: use the one-time code below.</p>
@@ -107,7 +108,7 @@
                     <p id="pairing-expires" class="pairing-expires"></p>
                     <p class="manual-pairing-hint">Manual fallback: run <code>kdedeck_daemon --pair</code> in an interactive terminal and enter the code here.</p>
                 </section>
-                <button type="button" id="request-pairing-btn" class="btn-secondary">Show local pairing code</button>
+                <button type="button" id="request-pairing-btn" class="btn-secondary">Show enrollment / pairing data</button>
                 <p id="auth-error" class="auth-error" role="alert" aria-live="polite"></p>
                 <div class="modal-actions">
                     <button type="submit" class="btn-primary">Connect</button>

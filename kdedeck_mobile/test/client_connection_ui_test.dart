@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kdedeck_mobile/services/websocket_service.dart';
@@ -17,6 +19,7 @@ class FakeConnection extends WebSocketService {
 
   String? code;
   String? token;
+  EnrollmentInvite? invite;
   bool forgot = false;
   bool reloaded = false;
   Map<String, dynamic>? added;
@@ -34,6 +37,9 @@ class FakeConnection extends WebSocketService {
 
   @override
   Future<void> pairWithToken(String value) async => token = value;
+
+  @override
+  Future<void> enroll(EnrollmentInvite value) async => invite = value;
 
   @override
   Future<void> clearCredential() async {
@@ -256,6 +262,31 @@ void main() {
     expect(find.text('Scan PC enrollment QR'), findsOneWidget);
     await tester.tapAndWait(find.text('Cancel'));
     expect(find.byKey(const Key('pairingCode')), findsOneWidget);
+  });
+
+  testWidgets('pasted enrollment uses the same strict parser as QR',
+      (tester) async {
+    service.change(pairing: true);
+    await renderOnboarding(tester);
+    await tester.enterTextWhenReady(
+      find.byKey(const Key('enrollmentPayload')),
+      jsonEncode({
+        'version': 1,
+        'scheme': 'https',
+        'host': 'pc.example',
+        'port': 8484,
+        'certificate_sha256': 'a' * 64,
+        'challenge': 'challenge_123',
+        'issued_at': DateTime.now().toUtc().toIso8601String(),
+        'expires_at': DateTime.now()
+            .toUtc()
+            .add(const Duration(minutes: 1))
+            .toIso8601String(),
+      }),
+    );
+    await tester.tapAndWait(find.byKey(const Key('pasteEnrollment')));
+    expect(service.invite?.host, 'pc.example');
+    expect(service.invite?.scheme, 'https');
   });
 
   testWidgets(

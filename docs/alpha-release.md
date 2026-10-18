@@ -1,9 +1,14 @@
 # KDE Deck alpha release plan
 
-> **Current status: alpha not ready yet.** The automated foundation is in this
-> branch, but same-LAN service advertisement, end-to-end QR enrollment, and a
-> production-signed APK still require completion and physical acceptance. Do
-> not distribute this branch as the first user-facing alpha.
+> **Current status: alpha not ready yet.** The source-level discovery and
+> enrollment foundation may be present in this branch, but same-LAN discovery,
+> end-to-end QR/camera-less enrollment, a production-signed APK, and physical
+> acceptance still require evidence. Do not distribute this branch as the first
+> user-facing alpha.
+
+**Acceptance status:** NOT READY
+**Acceptance owner:** unassigned
+**Acceptance date:** not recorded
 
 This plan is the release contract for the first end-user flow: a Linux PC
 starts KDE Deck, a browser or Android client finds/selects that PC, the user
@@ -23,8 +28,16 @@ make alpha-source-check
 ```
 
 This checks the pinned release metadata, required lockfiles and gate scripts,
-the presence of this end-user plan, and the documented tray/browser/pairing /
-Android acceptance contract. It is included in `make test`.
+the actual Linux `_kde-deck._tcp.` advertisement source, the Android NSD source,
+and the live daemon/client enrollment route, parser, transport, scanner, and
+tests. It also checks the documented tray/browser/pairing/Android acceptance
+contract. It is included in `make test`. A source-contract pass does not prove
+that a Linux host advertised a service or that a phone completed enrollment.
+
+If the Linux advertisement implementation is absent, this gate fails closed. A
+documentation mention or an Android discovery client alone is not sufficient;
+even a passing source contract does not satisfy the physical same-LAN and
+enrollment criteria below.
 
 After CI or a local build has produced `artifacts/kdedeck_daemon` and
 `artifacts/app-release.apk`, run the artifact gate:
@@ -35,18 +48,23 @@ make alpha-readiness-check ARTIFACT_DIR=artifacts SIGNING_MODE=allow-debug
 
 The gate validates version/runtime metadata, daemon executability, APK archive
 contents, and APK signature verification. `allow-debug` is for CI validation
-artifacts only. A distributable alpha must use a production keystore:
+artifacts only and prints a validation result; it never declares the alpha
+ready and must not be distributed. A distributable alpha must use a production
+keystore and the explicit acceptance gate:
 
 ```bash
 KDEDECK_RELEASE_TAG=v1.0.0 \
-  make alpha-readiness-check ARTIFACT_DIR=artifacts SIGNING_MODE=--require-release
+  make alpha-release-check ARTIFACT_DIR=artifacts
 ```
 
 When `KDEDECK_RELEASE_TAG` (or the GitHub `GITHUB_REF_NAME`) is a `v*` tag, it
 must equal the release metadata version. No key, token, pairing code, device
 identifier, or workstation path is accepted by these checks. CI does not claim
 to have tested a physical camera, Android keyboard, certificate store, or tray
-menu; those remain in the manual checklist.
+menu; those remain in the manual checklist. The production gate fails until
+the checklist below is fully checked, and the checklist status, owner, and date
+are recorded as `PASS`; this is intentionally separate from CI's debug-signed
+artifact validation.
 
 ## Linux tray and daemon
 
@@ -98,15 +116,16 @@ explicitly and pair again.
 The daemon does not yet advertise `_kde-deck._tcp.` on the LAN. Android NSD
 support is present behind a bounded client abstraction, but discovery is not
 alpha-ready until a real Linux advertisement and a physical same-LAN pass are
-verified.
+verified. The source gate fails closed while that Linux advertisement source is
+absent.
 
 ## QR pairing and camera-less fallback
 
-When the tray or dashboard presents a QR enrollment payload, scan it only as a
-transport shortcut. The current tray panel is a foundation placeholder until
-its payload is emitted in the exact Android `EnrollmentInvite` format and the
-daemon consumes the one-time challenge. Before calling this flow complete, the
-client must display and bind all of these values:
+When the secure dashboard presents a QR or copy/paste enrollment payload, use it
+only as a transport shortcut. The payload is emitted in the exact Android
+`EnrollmentInvite` format and the daemon consumes its one-time challenge.
+Before calling this flow complete, the client must display and bind all of
+these values:
 
 - the selected host and port;
 - the certificate identity/fingerprint (or the verified certificate artifact);
@@ -202,35 +221,60 @@ See [`android-release.md`](android-release.md) for the complete secret setup.
 
 Record only pass/fail and non-sensitive observations. Every item below is
 required on at least one supported KDE Plasma Linux host and one authorized
-Android phone; automated CI gates do not replace these checks.
+Android phone; automated CI gates do not replace these checks. A criterion is
+pass only when its complete condition and evidence requirement are satisfied.
 
-- [ ] Tray starts one daemon, shows the running tooltip, opens the browser, and
-      quits cleanly without leaving the port occupied.
-- [ ] Loopback browser setup loads, displays the pairing prompt, accepts one
-      valid code, rejects an invalid/expired code, and reconnects with the
-      session token without exposing it.
-- [ ] Same-LAN discovery finds the intended host; manual host selection works
-      when discovery is unavailable; host, port, and certificate identity are
-      visible and match the trusted terminal.
-- [ ] HTTPS/WSS succeeds with the verified certificate; wrong hostname,
-      changed fingerprint, missing trust, and plaintext LAN are rejected before
-      pairing data is sent.
-- [ ] QR enrollment binds endpoint, certificate identity, and one-time data;
-      malformed/expired QR data is rejected.
-- [ ] Camera-less fallback completes with manual host selection and a short
-      typed code, including code rotation after expiry.
-- [ ] Android installation succeeds from the verified APK, the app reports the
-      expected version, and secure trust import plus re-pair works after an
-      explicit certificate replacement.
-- [ ] An authenticated phone/browser loads the board, performs one harmless
-      action, saves a harmless configuration change, reconnects, and preserves
-      the change.
-- [ ] Production APK signature and release version match pass with
-      `--require-release`; no private key, credential, device identifier, or
-      sensitive terminal output appears in the release evidence.
-- [ ] The rollback procedure is rehearsed with a disposable test profile:
-      previous daemon/config restore, session revocation, and same-key APK
-      replacement all complete and require re-pair only where documented.
+- [ ] **ALPHA-01 — Tray ownership:** The packaged tray starts exactly one
+      daemon, shows the running tooltip, opens the browser, and quits cleanly;
+      `/healthz` is no longer reachable and port 8484 can be rebound after
+      quit. **Evidence:** pass/fail plus the host OS and package version only.
+- [ ] **ALPHA-02 — Browser pairing and reconnect:** Loopback setup loads,
+      accepts one valid code, rejects an invalid and an expired code with a
+      bounded message, and reloads into an authenticated session without
+      displaying or persisting the one-time code. **Evidence:** pass/fail and
+      the observed UI states; never record credentials.
+- [ ] **ALPHA-03 — Same-LAN discovery and fallback:** The Android client finds
+      the intended `_kde-deck._tcp.` service on the same LAN, and manual host
+      selection succeeds when discovery is unavailable. The selected host,
+      port, scheme, and certificate identity match the trusted terminal.
+      **Evidence:** pass/fail and redacted endpoint shape; no IP/device ID is
+      retained in release evidence.
+- [ ] **ALPHA-04 — TLS identity enforcement:** HTTPS/WSS succeeds with the
+      verified certificate; wrong hostname, changed fingerprint, missing trust,
+      and plaintext LAN are rejected before pairing data is sent. **Evidence:**
+      pass/fail for each rejection case and no certificate material.
+- [ ] **ALPHA-05 — QR enrollment binding:** A QR payload in the exact versioned
+      `EnrollmentInvite` shape binds host, port, HTTPS/WSS scheme, certificate
+      identity, one-time challenge, and expiry; malformed, unsupported,
+      modified, and expired payloads are rejected without storing a token.
+      **Evidence:** pass/fail for each rejection class; do not retain QR data.
+- [ ] **ALPHA-06 — Camera-less enrollment:** Manual host selection plus the
+      short typed code completes enrollment without a camera; a failed or
+      expired code shows a bounded error, stores no token, and a newly rotated
+      code succeeds once. **Evidence:** pass/fail and expiry/rotation result;
+      never record the code.
+- [ ] **ALPHA-07 — Android install and trust rotation:** The verified APK
+      installs, reports the expected application ID/version, connects over
+      secure LAN transport, imports trust only after independent fingerprint
+      verification, and requires re-pair after explicit certificate replacement.
+      **Evidence:** pass/fail and version only; no serial or certificate data.
+- [ ] **ALPHA-08 — Authenticated user flow:** An authenticated phone and browser
+      load the board, perform one harmless action, save a harmless
+      configuration change, reconnect, and preserve that change. **Evidence:**
+      pass/fail and the non-sensitive action category only.
+- [ ] **ALPHA-09 — Production artifact:** The APK and daemon version/build
+      metadata match, `make alpha-release-check` passes with
+      `--require-release`, and no private key, credential, pairing code,
+      device identifier, or sensitive terminal output appears in the release
+      evidence. **Evidence:** gate output with paths and secrets redacted.
+- [ ] **ALPHA-10 — Rollback:** Using a disposable profile, restore the previous
+      daemon/config, revoke sessions, rotate the pairing code, and replace the
+      APK with the same production key. Re-pair occurs exactly where this plan
+      documents it. **Evidence:** pass/fail and recovery step names only.
 
-An alpha is ready only when every checkbox passes, the automated gates are
-green, and the release owner has retained the non-sensitive pass/fail record.
+The release owner must change **Acceptance status** to `PASS`, record a named
+owner and UTC date, and check every criterion only after retaining the
+non-sensitive evidence. An alpha is ready only when all ten checkboxes pass,
+the source and production artifact gates are green, and the owner has recorded
+that decision. CI's debug APK artifact and `allow-pending` validation mode can
+never satisfy ALPHA-09 or change this decision.

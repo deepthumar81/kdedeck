@@ -186,8 +186,9 @@ This first verifies that the backend and mobile package versions, standalone
 daemon release metadata, changelog heading, runtime pins, lockfiles, Docker
 base image, and CI setup agree. It then runs the serial backend suite, browser
 tests and syntax checks, Go tests and vet, and Flutter tests. After dependencies
-are installed, it does not download anything. Run just the release/package gate
-with:
+are installed, it does not download anything. Each subprocess is bounded by
+`TEST_TIMEOUT` (180 seconds by default); a missing tool or timeout is a visible
+failure. Run just the release/package gate with:
 
 ```bash
 make release-check
@@ -220,6 +221,15 @@ same check before upload):
 
 ```bash
 make release-artifact-check ARTIFACT_DIR=artifacts
+```
+
+The CI artifact check accepts a debug-signed APK only as a non-distributable
+validation output. A public alpha additionally requires production signing and
+the completed manual acceptance checklist in
+[`docs/alpha-release.md`](docs/alpha-release.md):
+
+```bash
+KDEDECK_RELEASE_TAG=v1.0.0 make alpha-release-check ARTIFACT_DIR=artifacts
 ```
 
 ### Docker build and run

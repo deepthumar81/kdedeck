@@ -419,6 +419,12 @@ class WebSocketService extends ChangeNotifier {
   /// code. The certificate is verified against the invitation digest before it
   /// is stored; TLS still performs normal hostname and expiry validation.
   Future<void> enroll(EnrollmentInvite invite) async {
+    if (invite.scheme != 'https') {
+      authError = 'tls_required';
+      status = 'tls_required';
+      notifyListeners();
+      return;
+    }
     final endpoint = _Endpoint(invite.host, invite.port, true);
     _stopCurrent();
     serverIp = invite.host;

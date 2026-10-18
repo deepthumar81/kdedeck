@@ -13,6 +13,7 @@ Map<String, dynamic> _payload({
 }) =>
     {
       'version': 1,
+      'scheme': 'https',
       'host': host,
       'port': 8484,
       'certificate_sha256': _fingerprint,
@@ -29,6 +30,7 @@ void main() {
   test('parses a daemon enrollment payload without manual PEM entry', () {
     final invite = EnrollmentInvite.parse(jsonEncode(_payload()));
     expect(invite.name, 'KDE Deck PC');
+    expect(invite.scheme, 'https');
     expect(invite.host, 'pc.local');
     expect(invite.port, 8484);
     expect(invite.challenge, 'ABCD_1234');
@@ -47,6 +49,10 @@ void main() {
                 .toUtc()
                 .subtract(const Duration(seconds: 1))
                 .toIso8601String()))),
+        throwsFormatException);
+    expect(
+        () => EnrollmentInvite.parse(
+            jsonEncode({..._payload(), 'scheme': 'http'})),
         throwsFormatException);
     expect(
         () => EnrollmentInvite.parse(

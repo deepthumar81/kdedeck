@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 class EnrollmentInvite {
   EnrollmentInvite({
     required this.version,
+    this.scheme = 'https',
     required this.host,
     required this.port,
     required this.certificateSha256,
@@ -19,7 +20,7 @@ class EnrollmentInvite {
     required this.issuedAt,
     required this.expiresAt,
   }) {
-    if (version != 1 || port < 1 || port > 65535) {
+    if (version != 1 || scheme != 'https' || port < 1 || port > 65535) {
       throw const FormatException('Malformed enrollment');
     }
     _validateHost(host);
@@ -39,6 +40,7 @@ class EnrollmentInvite {
   }
 
   final int version;
+  final String scheme;
   final String host;
   final int port;
   final String certificateSha256;
@@ -58,6 +60,7 @@ class EnrollmentInvite {
     if (decoded is! Map) throw const FormatException('Malformed enrollment');
     const expected = <String>{
       'version',
+      'scheme',
       'host',
       'port',
       'certificate_sha256',
@@ -83,6 +86,7 @@ class EnrollmentInvite {
     }
     return EnrollmentInvite(
       version: map['version'] as int,
+      scheme: map['scheme'] as String,
       host: map['host'] as String,
       port: map['port'] as int,
       certificateSha256: map['certificate_sha256'] as String,
@@ -94,6 +98,7 @@ class EnrollmentInvite {
 
   Map<String, dynamic> toJson() => {
         'version': version,
+        'scheme': scheme,
         'host': host,
         'port': port,
         'certificate_sha256': certificateSha256,

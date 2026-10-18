@@ -42,7 +42,359 @@ const pairingPayloadEl = document.getElementById('pairing-payload');
 const pairingCodeDisplay = document.getElementById('pairing-code-display');
 const pairingExpires = document.getElementById('pairing-expires');
 const copyPairingBtn = document.getElementById('copy-pairing-btn');
+const pairingQrEl = document.getElementById('pairing-qr');
 let localPairingRequested = false;
+
+// This is a small, dependency-free QR Code Model 2 byte-mode encoder. The
+// enrollment JSON is kept as bytes, so the QR contains the same payload that
+// is shown and copied below. The implementation is local so the tray
+// dashboard remains usable without a network or a package install.
+const QR_ECC_CODEWORDS_PER_BLOCK_LOW = [
+    -1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28,
+    28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30,
+];
+const QR_ERROR_CORRECTION_BLOCKS_LOW = [
+    -1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7,
+    8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25,
+];
+
+function qrAppendBits(bits, value, length) {
+    for (let i = length - 1; i >= 0; i -= 1) bits.push((value >>> i) & 1);
+}
+
+function qrMultiply(x, y) {
+    let result = 0;
+    for (let i = 0; i < 8; i += 1) {
+        if ((y & 1) !== 0) result ^= x;
+        const high = x & 0x80;
+        x = (x << 1) & 0xff;
+        if (high !== 0) x ^= 0x1d;
+        y >>>= 1;
+    }
+    return result;
+}
+
+function qrRawDataModules(version) {
+    let result = (16 * version + 128) * version + 64;
+    if (version >= 2) {
+        const alignmentCount = Math.floor(version / 7) + 2;
+        result -= (25 * alignmentCount - 10) * alignmentCount - 55;
+        if (version >= 7) result -= 36;
+    }
+    return result;
+}
+
+function qrDataCapacity(version) {
+    const rawCodewords = Math.floor(qrRawDataModules(version) / 8);
+    return rawCodewords - QR_ECC_CODEWORDS_PER_BLOCK_LOW[version] * QR_ERROR_CORRECTION_BLOCKS_LOW[version];
+}
+
+function qrReedSolomonDivisor(degree) {
+    const divisor = Array(degree).fill(0);
+    divisor[degree - 1] = 1;
+    let root = 1;
+    for (let i = 0; i < degree; i += 1) {
+        for (let j = 0; j < divisor.length; j += 1) {
+            divisor[j] = qrMultiply(divisor[j], root);
+            if (j + 1 < divisor.length) divisor[j] ^= divisor[j + 1];
+        }
+        root = qrMultiply(root, 2);
+    }
+    return divisor;
+}
+
+function qrReedSolomonRemainder(data, divisor) {
+    const remainder = Array(divisor.length).fill(0);
+    for (const byte of data) {
+        const factor = byte ^ remainder.shift();
+        remainder.push(0);
+        divisor.forEach((coefficient, index) => {
+            remainder[index] ^= qrMultiply(coefficient, factor);
+        });
+    }
+    return remainder;
+}
+
+function qrAddErrorCorrection(dataCodewords, version) {
+    const rawCodewords = Math.floor(qrRawDataModules(version) / 8);
+    const blockCount = QR_ERROR_CORRECTION_BLOCKS_LOW[version];
+    const eccLength = QR_ECC_CODEWORDS_PER_BLOCK_LOW[version];
+    const shortBlockLength = Math.floor(rawCodewords / blockCount);
+    const shortBlockCount = blockCount - (rawCodewords % blockCount);
+    const divisor = qrReedSolomonDivisor(eccLength);
+    const blocks = [];
+    let offset = 0;
+
+    for (let index = 0; index < blockCount; index += 1) {
+        const dataLength = shortBlockLength - eccLength + (index < shortBlockCount ? 0 : 1);
+        const blockData = dataCodewords.slice(offset, offset + dataLength);
+        offset += dataLength;
+        const ecc = qrReedSolomonRemainder(blockData, divisor);
+        if (index < shortBlockCount) blockData.push(0);
+        blocks.push(blockData.concat(ecc));
+    }
+
+    const interleaved = [];
+    for (let index = 0; index < blocks[0].length; index += 1) {
+        blocks.forEach((block, blockIndex) => {
+            if (index !== shortBlockLength - eccLength || blockIndex >= shortBlockCount) {
+                interleaved.push(block[index]);
+            }
+        });
+    }
+    return interleaved;
+}
+
+function qrAlignmentPositions(version, size) {
+    if (version === 1) return [];
+    const count = Math.floor(version / 7) + 2;
+    const step = Math.floor((version * 8 + count * 3 + 5) / (count * 4 - 4)) * 2;
+    const positions = [6];
+    for (let position = size - 7; positions.length < count; position -= step) {
+        positions.splice(1, 0, position);
+    }
+    return positions;
+}
+
+function qrGetBit(value, index) {
+    return ((value >>> index) & 1) !== 0;
+}
+
+function qrDrawFormatBits(modules, functions, size, mask) {
+    const data = (1 << 3) | mask; // Low error correction level is format value 01.
+    let remainder = data;
+    for (let i = 0; i < 10; i += 1) {
+        remainder = (remainder << 1) ^ ((remainder >>> 9) * 0x537);
+    }
+    const bits = ((data << 10) | remainder) ^ 0x5412;
+    const set = (x, y, value) => {
+        modules[y][x] = value;
+        functions[y][x] = true;
+    };
+
+    for (let i = 0; i <= 5; i += 1) set(8, i, qrGetBit(bits, i));
+    set(8, 7, qrGetBit(bits, 6));
+    set(8, 8, qrGetBit(bits, 7));
+    set(7, 8, qrGetBit(bits, 8));
+    for (let i = 9; i < 15; i += 1) set(14 - i, 8, qrGetBit(bits, i));
+    for (let i = 0; i < 8; i += 1) set(size - 1 - i, 8, qrGetBit(bits, i));
+    for (let i = 8; i < 15; i += 1) set(8, size - 15 + i, qrGetBit(bits, i));
+    set(8, size - 8, true);
+}
+
+function qrDrawVersionBits(modules, functions, size, version) {
+    if (version < 7) return;
+    let remainder = version;
+    for (let i = 0; i < 12; i += 1) {
+        remainder = (remainder << 1) ^ ((remainder >>> 11) * 0x1f25);
+    }
+    const bits = (version << 12) | remainder;
+    for (let i = 0; i < 18; i += 1) {
+        const value = qrGetBit(bits, i);
+        const a = size - 11 + (i % 3);
+        const b = Math.floor(i / 3);
+        modules[b][a] = value;
+        functions[b][a] = true;
+        modules[a][b] = value;
+        functions[a][b] = true;
+    }
+}
+
+function qrBuildMatrix(version, codewords, mask) {
+    const size = version * 4 + 17;
+    const modules = Array.from({ length: size }, () => Array(size).fill(false));
+    const functions = Array.from({ length: size }, () => Array(size).fill(false));
+    const setFunction = (x, y, value) => {
+        modules[y][x] = value;
+        functions[y][x] = true;
+    };
+    const drawFinder = (centerX, centerY) => {
+        for (let dy = -4; dy <= 4; dy += 1) {
+            for (let dx = -4; dx <= 4; dx += 1) {
+                const x = centerX + dx;
+                const y = centerY + dy;
+                if (x >= 0 && x < size && y >= 0 && y < size) {
+                    const distance = Math.max(Math.abs(dx), Math.abs(dy));
+                    setFunction(x, y, distance !== 2 && distance !== 4);
+                }
+            }
+        }
+    };
+    const drawAlignment = (centerX, centerY) => {
+        for (let dy = -2; dy <= 2; dy += 1) {
+            for (let dx = -2; dx <= 2; dx += 1) {
+                setFunction(centerX + dx, centerY + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+            }
+        }
+    };
+
+    for (let i = 0; i < size; i += 1) {
+        setFunction(6, i, i % 2 === 0);
+        setFunction(i, 6, i % 2 === 0);
+    }
+    drawFinder(3, 3);
+    drawFinder(size - 4, 3);
+    drawFinder(3, size - 4);
+    const alignment = qrAlignmentPositions(version, size);
+    alignment.forEach((y, yIndex) => alignment.forEach((x, xIndex) => {
+        if (!((yIndex === 0 && xIndex === 0) ||
+              (yIndex === 0 && xIndex === alignment.length - 1) ||
+              (yIndex === alignment.length - 1 && xIndex === 0))) {
+            drawAlignment(x, y);
+        }
+    }));
+    qrDrawFormatBits(modules, functions, size, 0);
+    qrDrawVersionBits(modules, functions, size, version);
+
+    let bitIndex = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+        if (right === 6) right = 5;
+        for (let vertical = 0; vertical < size; vertical += 1) {
+            for (let j = 0; j < 2; j += 1) {
+                const x = right - j;
+                const upward = ((right + 1) & 2) === 0;
+                const y = upward ? size - 1 - vertical : vertical;
+                if (!functions[y][x] && bitIndex < codewords.length * 8) {
+                    modules[y][x] = qrGetBit(codewords[bitIndex >>> 3], 7 - (bitIndex & 7));
+                    bitIndex += 1;
+                }
+            }
+        }
+    }
+
+    const applyMask = (selectedMask) => {
+        for (let y = 0; y < size; y += 1) {
+            for (let x = 0; x < size; x += 1) {
+                let invert;
+                switch (selectedMask) {
+                    case 0: invert = (x + y) % 2 === 0; break;
+                    case 1: invert = y % 2 === 0; break;
+                    case 2: invert = x % 3 === 0; break;
+                    case 3: invert = (x + y) % 3 === 0; break;
+                    case 4: invert = (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0; break;
+                    case 5: invert = (x * y) % 2 + (x * y) % 3 === 0; break;
+                    case 6: invert = ((x * y) % 2 + (x * y) % 3) % 2 === 0; break;
+                    default: invert = ((x + y) % 2 + (x * y) % 3) % 2 === 0; break;
+                }
+                if (!functions[y][x] && invert) modules[y][x] = !modules[y][x];
+            }
+        }
+    };
+    const penalty = () => {
+        let score = 0;
+        const addLinePenalty = (line) => {
+            let runColor = line[0];
+            let runLength = 1;
+            for (let i = 1; i < line.length; i += 1) {
+                if (line[i] === runColor) {
+                    runLength += 1;
+                    if (runLength === 5) score += 3;
+                    else if (runLength > 5) score += 1;
+                } else {
+                    runColor = line[i];
+                    runLength = 1;
+                }
+            }
+            for (let i = 0; i <= line.length - 7; i += 1) {
+                if (line[i] && !line[i + 1] && line[i + 2] && line[i + 3] && line[i + 4] && !line[i + 5] && line[i + 6]) {
+                    const before = i >= 4 && line.slice(i - 4, i).every((value) => !value);
+                    const after = i + 11 <= line.length && line.slice(i + 7, i + 11).every((value) => !value);
+                    if (before || after) score += 40;
+                }
+            }
+        };
+        for (let y = 0; y < size; y += 1) addLinePenalty(modules[y]);
+        for (let x = 0; x < size; x += 1) addLinePenalty(modules.map((row) => row[x]));
+        for (let y = 0; y < size - 1; y += 1) {
+            for (let x = 0; x < size - 1; x += 1) {
+                const value = modules[y][x];
+                if (value === modules[y][x + 1] && value === modules[y + 1][x] && value === modules[y + 1][x + 1]) score += 3;
+            }
+        }
+        let dark = 0;
+        modules.forEach((row) => row.forEach((value) => { if (value) dark += 1; }));
+        score += (Math.ceil(Math.abs(dark * 20 - size * size * 10) / (size * size)) - 1) * 10;
+        return score;
+    };
+
+    let bestMask = 0;
+    let bestPenalty = Number.POSITIVE_INFINITY;
+    for (let candidate = 0; candidate < 8; candidate += 1) {
+        applyMask(candidate);
+        qrDrawFormatBits(modules, functions, size, candidate);
+        const candidatePenalty = penalty();
+        if (candidatePenalty < bestPenalty) {
+            bestPenalty = candidatePenalty;
+            bestMask = candidate;
+        }
+        applyMask(candidate);
+    }
+    applyMask(bestMask);
+    qrDrawFormatBits(modules, functions, size, bestMask);
+    return modules;
+}
+
+function qrEncode(text) {
+    const bytes = typeof TextEncoder === 'function'
+        ? Array.from(new TextEncoder().encode(text))
+        : Array.from(unescape(encodeURIComponent(text)), (character) => character.charCodeAt(0));
+    let version = 1;
+    while (version < 40 && 4 + (version <= 9 ? 8 : 16) + bytes.length * 8 > qrDataCapacity(version) * 8) version += 1;
+    const countBits = version <= 9 ? 8 : 16;
+    if (4 + countBits + bytes.length * 8 > qrDataCapacity(version) * 8) throw new Error('Enrollment payload is too large for a QR code.');
+
+    const bits = [];
+    qrAppendBits(bits, 0x4, 4); // Byte mode.
+    qrAppendBits(bits, bytes.length, countBits);
+    bytes.forEach((byte) => qrAppendBits(bits, byte, 8));
+    const capacityBits = qrDataCapacity(version) * 8;
+    qrAppendBits(bits, 0, Math.min(4, capacityBits - bits.length));
+    while (bits.length % 8 !== 0) bits.push(0);
+    for (let pad = 0xec; bits.length < capacityBits; pad ^= 0xec ^ 0x11) qrAppendBits(bits, pad, 8);
+    const dataCodewords = [];
+    for (let i = 0; i < bits.length; i += 8) {
+        let byte = 0;
+        for (let bit = 0; bit < 8; bit += 1) byte = (byte << 1) | bits[i + bit];
+        dataCodewords.push(byte);
+    }
+    return qrBuildMatrix(version, qrAddErrorCorrection(dataCodewords, version), 0);
+}
+
+function renderPairingQr(payload) {
+    pairingQrEl.replaceChildren();
+    pairingQrEl.hidden = !payload;
+    if (!payload) return;
+
+    const matrix = qrEncode(payload);
+    const size = matrix.length;
+    const svg = document.createElementNS
+        ? document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        : document.createElement('svg');
+    svg.setAttribute('viewBox', `0 0 ${size + 8} ${size + 8}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Scan this QR code to enroll the phone');
+    const createSvgElement = (tagName) => document.createElementNS
+        ? document.createElementNS('http://www.w3.org/2000/svg', tagName)
+        : document.createElement(tagName);
+    const background = createSvgElement('rect');
+    background.setAttribute('x', '0');
+    background.setAttribute('y', '0');
+    background.setAttribute('width', String(size + 8));
+    background.setAttribute('height', String(size + 8));
+    background.setAttribute('fill', '#ffffff');
+    svg.appendChild(background);
+    matrix.forEach((row, y) => row.forEach((dark, x) => {
+        if (!dark) return;
+        const module = createSvgElement('rect');
+        module.setAttribute('x', String(x + 4));
+        module.setAttribute('y', String(y + 4));
+        module.setAttribute('width', '1');
+        module.setAttribute('height', '1');
+        module.setAttribute('fill', '#000000');
+        svg.appendChild(module);
+    }));
+    pairingQrEl.appendChild(svg);
+}
 
 function availableStorages() {
     const storages = [];
@@ -146,21 +498,72 @@ async function requestLocalPairingCode() {
     requestPairingBtn.disabled = true;
     requestPairingBtn.textContent = 'Loading local code...';
     try {
-        const response = await fetch('/pairing', { credentials: 'same-origin' });
-        if (!response.ok) throw new Error('Pairing is available only from the local tray dashboard.');
-        const pairing = await response.json();
-        if (typeof pairing.code !== 'string' || typeof pairing.expires_at !== 'string') throw new Error('The daemon returned an invalid pairing response.');
-        pairingCodeInput.value = pairing.code;
-        pairingCodeDisplay.textContent = pairing.code;
-        pairingExpires.textContent = `Expires ${new Date(pairing.expires_at).toLocaleTimeString()} (one use only)`;
-        pairingPayloadEl.textContent = `kdedeck://pair?origin=${window.location.origin}&code=${pairing.code}`;
+        // QR/copy-paste enrollment is the exact JSON consumed by
+        // EnrollmentInvite.parse on Android. It is served only by a secure
+        // daemon listener; a plaintext tray dashboard still keeps the short
+        // code fallback below.
+        let enrollmentPayload = null;
+        try {
+            const enrollmentResponse = await fetch('/enrollment', { credentials: 'same-origin' });
+            if (enrollmentResponse.ok) {
+                const candidate = await enrollmentResponse.json();
+                const expected = ['version', 'scheme', 'host', 'port', 'certificate_sha256', 'challenge', 'issued_at', 'expires_at'];
+                if (candidate && expected.every((key) => Object.prototype.hasOwnProperty.call(candidate, key)) &&
+                    Object.keys(candidate).length === expected.length && candidate.version === 1 && candidate.scheme === 'https' &&
+                    typeof candidate.host === 'string' && Number.isInteger(candidate.port) &&
+                    typeof candidate.certificate_sha256 === 'string' && typeof candidate.challenge === 'string' &&
+                    typeof candidate.issued_at === 'string' && typeof candidate.expires_at === 'string') {
+                    enrollmentPayload = candidate;
+                }
+            }
+        } catch (_) {
+            // The HTTP loopback tray dashboard may not have a secure
+            // enrollment route. The local short-code path remains available.
+        }
+
+        let pairing = null;
+        try {
+            const response = await fetch('/pairing', { credentials: 'same-origin' });
+            if (response.ok) {
+                const candidate = await response.json();
+                if (typeof candidate.code === 'string' && typeof candidate.expires_at === 'string') {
+                    pairing = candidate;
+                }
+            }
+        } catch (_) {
+            // Secure LAN dashboards intentionally do not expose the local
+            // short-code route; the enrollment payload is still usable.
+        }
+        if (enrollmentPayload === null && pairing === null) {
+            throw new Error('The daemon returned no enrollment or local pairing data.');
+        }
+        if (pairing !== null) {
+            pairingCodeInput.value = pairing.code;
+            pairingCodeDisplay.textContent = pairing.code;
+            pairingExpires.textContent = `Expires ${new Date(pairing.expires_at).toLocaleTimeString()} (one use only)`;
+        } else {
+            pairingCodeDisplay.textContent = '';
+            pairingExpires.textContent = 'Secure enrollment is available; use the payload below.';
+        }
+        pairingPayloadEl.textContent = enrollmentPayload === null
+            ? 'Secure QR enrollment is unavailable on this dashboard. Use the one-time code below.'
+            : JSON.stringify(enrollmentPayload);
+        try {
+            renderPairingQr(enrollmentPayload === null ? '' : pairingPayloadEl.textContent);
+        } catch (_) {
+            // Keep copy/paste and the short-code fallback if a future payload
+            // exceeds the QR encoder's bounded capacity.
+            renderPairingQr('');
+            authErrorEl.textContent = 'QR display is unavailable; use the pairing payload or short code below.';
+        }
         localPairingPanel.hidden = false;
-        requestPairingBtn.textContent = 'New local pairing code';
+        requestPairingBtn.textContent = 'Refresh enrollment / pairing data';
         localPairingRequested = false;
         requestPairingBtn.disabled = false;
     } catch (error) {
+        renderPairingQr('');
         requestPairingBtn.disabled = false;
-        requestPairingBtn.textContent = 'Show local pairing code';
+        requestPairingBtn.textContent = 'Show enrollment / pairing data';
         localPairingRequested = false;
         authErrorEl.textContent = error instanceof Error ? error.message : 'Could not load a local pairing code.';
     }
@@ -171,6 +574,7 @@ function hideAuthModal() {
     authModal.setAttribute('aria-hidden', 'true');
     authErrorEl.textContent = '';
     pairingCodeInput.value = '';
+    renderPairingQr('');
 }
 
 clearLegacyPersistentAuthToken();
@@ -354,7 +758,10 @@ authForm.addEventListener('submit', (event) => {
 
 requestPairingBtn.addEventListener('click', requestLocalPairingCode);
 copyPairingBtn.addEventListener('click', async () => {
-    if (!pairingPayloadEl.textContent) return;
+    if (!pairingPayloadEl.textContent || !pairingPayloadEl.textContent.startsWith('{')) {
+        authErrorEl.textContent = 'Secure enrollment is unavailable; enter the short code manually.';
+        return;
+    }
     try {
         await navigator.clipboard.writeText(pairingPayloadEl.textContent);
         copyPairingBtn.textContent = 'Copied pairing payload';

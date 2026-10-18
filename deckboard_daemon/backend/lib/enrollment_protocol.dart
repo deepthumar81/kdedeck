@@ -11,6 +11,7 @@ import 'package:crypto/crypto.dart';
 final class EnrollmentPayload {
   EnrollmentPayload({
     required this.version,
+    this.scheme = 'https',
     required this.host,
     required this.port,
     required this.certificateSha256,
@@ -25,6 +26,11 @@ final class EnrollmentPayload {
   static const Duration maxLifetime = Duration(minutes: 5);
 
   final int version;
+
+  /// Enrollment is deliberately HTTPS-only. The scheme is part of the
+  /// versioned wire payload so a copied challenge cannot be replayed over a
+  /// different transport.
+  final String scheme;
   final String host;
   final int port;
   final String certificateSha256;
@@ -34,6 +40,7 @@ final class EnrollmentPayload {
 
   Map<String, dynamic> toJson() => {
     'version': version,
+    'scheme': scheme,
     'host': host,
     'port': port,
     'certificate_sha256': certificateSha256,
@@ -50,6 +57,7 @@ final class EnrollmentPayload {
     if (value is! Map) throw const FormatException('Malformed enrollment');
     const expected = <String>{
       'version',
+      'scheme',
       'host',
       'port',
       'certificate_sha256',
@@ -64,6 +72,7 @@ final class EnrollmentPayload {
       throw const FormatException('Malformed enrollment');
     }
     final version = value['version'];
+    final scheme = value['scheme'];
     final host = value['host'];
     final port = value['port'];
     final certificate = value['certificate_sha256'];
@@ -72,6 +81,8 @@ final class EnrollmentPayload {
     final expires = value['expires_at'];
     if (version is! int ||
         version != currentVersion ||
+        scheme is! String ||
+        scheme != 'https' ||
         host is! String ||
         port is! int ||
         certificate is! String ||
@@ -115,6 +126,7 @@ final class EnrollmentPayload {
     }
     return EnrollmentPayload(
       version: version,
+      scheme: scheme,
       host: host,
       port: port,
       certificateSha256: certificate,
@@ -143,6 +155,7 @@ final class EnrollmentChallengeStore {
   final Map<String, EnrollmentPayload> _pending = {};
 
   EnrollmentPayload issue({
+    String scheme = 'https',
     required String host,
     required int port,
     required String certificateSha256,
@@ -163,6 +176,7 @@ final class EnrollmentChallengeStore {
     final now = _clock().toUtc();
     final payload = EnrollmentPayload(
       version: EnrollmentPayload.currentVersion,
+      scheme: scheme,
       host: host,
       port: port,
       certificateSha256: certificateSha256,
@@ -182,6 +196,7 @@ final class EnrollmentChallengeStore {
     final issued = _pending[candidate.challenge];
     if (issued == null ||
         candidate.version != issued.version ||
+        candidate.scheme != issued.scheme ||
         candidate.host != issued.host ||
         candidate.port != issued.port ||
         candidate.certificateSha256 != issued.certificateSha256 ||

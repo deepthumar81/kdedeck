@@ -60,7 +60,8 @@ security or UI/platform parity.
   probes are now terminated and reaped instead of retaining the session lock
   (Step 51).
 - [x] Local approval and role selection instead of always pairing as configAdmin
-  (Step 58); background/tray local pairing without logging codes remains.
+  (Step 58); tray dashboard pairing remains bounded to an explicit user request
+  and never logs the code or enrollment payload.
 - [x] Gate sensitive power/session actions behind an explicit policy and local
   confirmation for sleep, shutdown, and logout (Step 39).
 - [x] Restrict standalone application execution to locally approved opaque
@@ -129,7 +130,10 @@ security or UI/platform parity.
 - [ ] CI, packaging, clean-install/upgrade/recovery tests, release checks and docs
   synchronization (Step 59 adds CI, locked checks, Docker, daemon, and Android
   artifact gates; Step 69 adds the offline release metadata/runtime gate;
-  packaging and install/upgrade coverage remain).
+  packaging and install/upgrade coverage remain). The alpha gate now fails
+  closed when the Linux `_kde-deck._tcp.` advertisement source or live
+  enrollment sources are absent, and the tag workflow requires the checked
+  manual acceptance record; physical discovery/enrollment QA is still open.
 - [ ] Define versioned in-place app updates for the Linux daemon and Flutter app:
   monotonic release/build metadata, stable package identity, preserved user
   configuration and session data, explicit migrations and protocol compatibility,
