@@ -29,10 +29,14 @@ final class MdnsServiceAdvertiser implements MdnsAdvertiser {
     Future<MdnsDatagramTransport> Function()? transportFactory,
     Future<List<InternetAddress>> Function()? addressProvider,
     Duration announcementInterval = const Duration(seconds: 1),
+    Duration addressRetryInterval = const Duration(seconds: 5),
   }) : _transportFactory = transportFactory ?? _openTransport,
        _addressProvider = addressProvider ?? _localIpv4Addresses,
        _announcementInterval = _validateAnnouncementInterval(
          announcementInterval,
+       ),
+       _addressRetryInterval = _validateAnnouncementInterval(
+         addressRetryInterval,
        );
 
   /// The DNS-SD service type used by Android NSD clients.
@@ -66,9 +70,13 @@ final class MdnsServiceAdvertiser implements MdnsAdvertiser {
   final Future<MdnsDatagramTransport> Function() _transportFactory;
   final Future<List<InternetAddress>> Function() _addressProvider;
   final Duration _announcementInterval;
+  final Duration _addressRetryInterval;
   MdnsDatagramTransport? _transport;
   StreamSubscription<List<int>>? _packetSubscription;
   Timer? _announcementTimer;
+  Timer? _addressRetryTimer;
+  bool _startInFlight = false;
+  int _requestedPort = 0;
   int _port = 0;
   List<InternetAddress> _addresses = const <InternetAddress>[];
 
@@ -76,41 +84,74 @@ final class MdnsServiceAdvertiser implements MdnsAdvertiser {
 
   @override
   Future<void> start({required int port}) async {
-    if (isRunning) return;
+    if (isRunning || _startInFlight) return;
     if (port <= 0 || port > 65535) {
       throw ArgumentError.value(port, 'port', 'must be a TCP port');
     }
 
-    final addresses = _boundedAddresses(await _addressProvider());
-    // A service without an address record is not useful to NSD clients. It
-    // is also safer to remain silent on hosts with no usable LAN interface.
-    if (addresses.isEmpty) return;
-
-    final transport = await _transportFactory();
-    _port = port;
-    _addresses = addresses;
-    _transport = transport;
+    _requestedPort = port;
+    _startInFlight = true;
     try {
-      _packetSubscription = transport.packets.listen(_handlePacket);
-      _sendAnnouncement(recordTtlSeconds);
-      _announcementTimer = Timer.periodic(_announcementInterval, (_) {
-        if (isRunning) _sendAnnouncement(recordTtlSeconds);
-      });
-    } catch (_) {
-      _transport = null;
-      _announcementTimer?.cancel();
-      _announcementTimer = null;
-      await _packetSubscription?.cancel();
-      _packetSubscription = null;
-      await transport.close();
-      _port = 0;
-      _addresses = const <InternetAddress>[];
-      rethrow;
+      final addresses = _boundedAddresses(await _addressProvider());
+      // A service without an address record is not useful to NSD clients. It
+      // is also safer to remain silent on hosts with no usable LAN interface.
+      // Keep a bounded retry alive so a daemon started before the network
+      // interface is ready becomes discoverable without a restart.
+      if (addresses.isEmpty) {
+        _scheduleAddressRetry();
+        return;
+      }
+
+      final transport = await _transportFactory();
+      if (_requestedPort != port) {
+        await transport.close();
+        return;
+      }
+      _cancelAddressRetry();
+      _port = port;
+      _addresses = addresses;
+      _transport = transport;
+      try {
+        _packetSubscription = transport.packets.listen(_handlePacket);
+        _sendAnnouncement(recordTtlSeconds);
+        _announcementTimer = Timer.periodic(_announcementInterval, (_) {
+          if (isRunning) _sendAnnouncement(recordTtlSeconds);
+        });
+      } catch (_) {
+        _transport = null;
+        _announcementTimer?.cancel();
+        _announcementTimer = null;
+        await _packetSubscription?.cancel();
+        _packetSubscription = null;
+        await transport.close();
+        _port = 0;
+        _addresses = const <InternetAddress>[];
+        rethrow;
+      }
+    } finally {
+      _startInFlight = false;
     }
+  }
+
+  void _scheduleAddressRetry() {
+    _addressRetryTimer ??= Timer.periodic(_addressRetryInterval, (_) {
+      if (_requestedPort <= 0 || isRunning) {
+        _cancelAddressRetry();
+        return;
+      }
+      unawaited(start(port: _requestedPort));
+    });
+  }
+
+  void _cancelAddressRetry() {
+    _addressRetryTimer?.cancel();
+    _addressRetryTimer = null;
   }
 
   @override
   Future<void> stop() async {
+    _cancelAddressRetry();
+    _requestedPort = 0;
     final transport = _transport;
     if (transport == null) return;
 

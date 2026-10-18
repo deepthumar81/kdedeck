@@ -109,6 +109,34 @@ void main() {
     expect(transport.sent, isEmpty);
     expect(transport.closed, isFalse);
   });
+
+  test('retries after the LAN address becomes available', () async {
+    final transport = _FakeTransport();
+    var addresses = <InternetAddress>[];
+    final advertiser = MdnsServiceAdvertiser(
+      transportFactory: () async => transport,
+      addressProvider: () async => addresses,
+      addressRetryInterval: const Duration(milliseconds: 10),
+      announcementInterval: const Duration(hours: 1),
+    );
+
+    await advertiser.start(port: 8484);
+    expect(advertiser.isRunning, isFalse);
+    addresses = [InternetAddress('10.0.0.25')];
+    await _eventually(() => advertiser.isRunning);
+
+    expect(transport.sent, hasLength(1));
+    await advertiser.stop();
+    expect(transport.closed, isTrue);
+  });
+}
+
+Future<void> _eventually(bool Function() predicate) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 1));
+  while (!predicate() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  expect(predicate(), isTrue);
 }
 
 bool _sameBytes(List<int> left, List<int> right) {

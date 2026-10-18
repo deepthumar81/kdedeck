@@ -113,11 +113,11 @@ certificate silently, or send a bearer token to an endpoint other than the
 selected scheme/host/port identity. If a certificate rotates, replace trust
 explicitly and pair again.
 
-The daemon does not yet advertise `_kde-deck._tcp.` on the LAN. Android NSD
-support is present behind a bounded client abstraction, but discovery is not
-alpha-ready until a real Linux advertisement and a physical same-LAN pass are
-verified. The source gate fails closed while that Linux advertisement source is
-absent.
+The daemon advertises `_kde-deck._tcp.` on Linux and Android NSD support is
+present behind a bounded client abstraction. Discovery is still not
+alpha-ready until a real multicast advertisement and a physical same-LAN pass
+are verified. The source gate requires both implementations; the acceptance
+check remains separate from that source contract.
 
 ## QR pairing and camera-less fallback
 
