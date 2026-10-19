@@ -98,6 +98,32 @@ repository. The Android application still requires a physical-device UI and
 keystore pass; this smoke check only proves daemon transport/auth and forwarding
 setup.
 
+### Controlled physical LAN enrollment harness
+
+For a same-LAN Android pass, use the disposable fixture rather than changing
+the developer daemon configuration. Run these commands from
+`deckboard_daemon/backend` on a controlled network, replacing `<LAN-IP>` with
+the Linux host address visible to the phone:
+
+```bash
+QA_DIR="$(mktemp -d)"
+mkdir -p "$QA_DIR/run"
+dart run bin/tls_provision.dart \
+  --hostname <LAN-IP> \
+  --output-dir "$QA_DIR/tls"
+KDEDECK_QA_TLS_DIR="$QA_DIR/tls" \
+KDEDECK_QA_OUTPUT_DIR="$QA_DIR/run" \
+  dart run tool/physical_lan_qa.dart
+```
+
+Import only `$QA_DIR/tls/server.kdedeck-trust.json` on the authorized test
+phone, compare the displayed fingerprint through the separate local channel,
+and use the one-time value in `$QA_DIR/run/pairing.txt`. The fixture writes no
+credential to the repository or server log. Stop it from another terminal with
+`touch "$QA_DIR/run/stop"`, then remove the temporary directory. This harness
+does not replace the alpha checklist: QR decoding, Android NSD/mDNS discovery,
+and production signing still require their own evidence.
+
 ### Repository test command and environment failures
 
 `make test` first checks that the pinned command-line tools (`dart`, `flutter`,

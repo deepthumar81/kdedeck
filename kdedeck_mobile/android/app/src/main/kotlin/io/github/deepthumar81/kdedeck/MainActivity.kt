@@ -1,7 +1,9 @@
 package io.github.deepthumar81.kdedeck
 
+import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
@@ -11,6 +13,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val channelName = "io.github.deepthumar81.kdedeck/onboarding"
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -26,6 +29,7 @@ class MainActivity : FlutterActivity() {
 
     private fun discover(result: MethodChannel.Result, timeoutMs: Int) {
         val nsd = getSystemService(NSD_SERVICE) as NsdManager
+        acquireMulticastLock()
         val found = mutableListOf<Map<String, Any>>()
         val handler = Handler(Looper.getMainLooper())
         var finished = false
@@ -36,6 +40,7 @@ class MainActivity : FlutterActivity() {
                 runCatching { nsd.stopServiceDiscovery(listener) }
             }
             discoveryListener = null
+            releaseMulticastLock()
             result.success(found)
         }
         val listener = object : NsdManager.DiscoveryListener {
@@ -75,6 +80,25 @@ class MainActivity : FlutterActivity() {
             runCatching { nsd.stopServiceDiscovery(listener) }
         }
         discoveryListener = null
+        releaseMulticastLock()
         super.onDestroy()
+    }
+
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        val wifi = getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+        multicastLock = runCatching {
+            wifi.createMulticastLock("kdedeck-nsd").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.getOrNull()
+    }
+
+    private fun releaseMulticastLock() {
+        multicastLock?.let { lock ->
+            if (lock.isHeld) runCatching { lock.release() }
+        }
+        multicastLock = null
     }
 }
